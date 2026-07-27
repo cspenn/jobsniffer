@@ -1,9 +1,9 @@
 import pytest
 
+from jobsniffer.http.curl_client import CurlCffiClient
 from jobsniffer.http.exceptions import FixtureNotFoundError
 from jobsniffer.http.fixtures import RecordedExchange, append_fixture
 from jobsniffer.http.replay_client import ReplayClient
-from jobsniffer.http.curl_client import CurlCffiClient
 
 
 @pytest.fixture
@@ -77,9 +77,10 @@ def test_replay_missing_fixture_raises_with_method_and_url(fixture_path):
 
 def test_record_mode_appends_and_serves_from_memory(tmp_path):
     class FakeResponse:
-        status_code = 200
-        headers = {"content-type": "application/json"}
-        content = b'{"ok": true}'
+        def __init__(self):
+            self.status_code = 200
+            self.headers = {"content-type": "application/json"}
+            self.content = b'{"ok": true}'
 
     class FakeRecorder:
         def __init__(self):
@@ -101,8 +102,11 @@ def test_record_mode_appends_and_serves_from_memory(tmp_path):
     assert response.json() == {"ok": True}
     assert fake_recorder.calls == [("GET", "https://example.com/live")]
 
-    # Persisted to disk, and immediately servable from the same client's
-    # in-memory cache without hitting the recorder again.
+    # A record-mode client never reads its own recordings back -- it always
+    # hits the live recorder (verified above). Persisted-to-disk fixtures are
+    # served by a *separate* ReplayClient in replay mode, loaded from the
+    # fixture file this session wrote.
+    assert client._exchanges == []
     replay_client = ReplayClient(path)
     replayed = replay_client.get("https://example.com/live")
     assert replayed.json() == {"ok": True}

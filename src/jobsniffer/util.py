@@ -1,26 +1,18 @@
 from __future__ import annotations
 
-import logging
 import re
 
 import numpy as np
 from markdownify import markdownify as md
 
 from jobsniffer.http import CurlCffiClient, HttpClient
+from jobsniffer.logging_config import create_logger, set_logger_level  # noqa: F401
 from jobsniffer.model import CompensationInterval, JobType, Site
 
-
-def create_logger(name: str):
-    logger = logging.getLogger(f"JobSpy:{name}")
-    logger.propagate = False
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
-        console_handler = logging.StreamHandler()
-        format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
-        formatter = logging.Formatter(format)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
-    return logger
+# create_logger/set_logger_level are re-exported above for the 8 scrapers
+# that already do `from jobsniffer.util import create_logger`; see
+# jobsniffer.logging_config's module docstring for why the implementation
+# lives there instead of here.
 
 
 def create_session(
@@ -36,36 +28,28 @@ def create_session(
     proxy rotation, and retry-with-backoff.
 
     `is_tls` and `clear_cookies` are accepted for call-site compatibility
-    with the pre-curl_cffi signature but are no-ops: curl_cffi always
+    with the pre-curl_cffi signature but are true no-ops: curl_cffi always
     impersonates a browser TLS fingerprint (that's the reason it replaced
     tls_client/requests -- see jobsniffer.http.curl_client's module
     docstring), and per-request cookie clearing isn't meaningful for a
     client that doesn't persist a cookie jar across calls the way
-    requests.Session does. `has_retry`/`delay` are likewise superseded by
-    CurlCffiClient's built-in stamina retry, which is always on.
+    requests.Session does.
+
+    `has_retry`/`delay` ARE forwarded, not discarded: CurlCffiClient always
+    retries transient failures, but callers that previously asked for
+    has_retry=True with a slower `delay` (e.g. linkedin/naukri/bdjobs pass
+    delay=5, vs. bayt/glassdoor's default delay=1) get a larger retry
+    budget and a longer initial backoff, matching their original intent
+    instead of silently collapsing every scraper onto one retry policy.
     :return: An HttpClient
     """
-    del is_tls, has_retry, delay, clear_cookies  # compatibility no-ops, see above
-    return CurlCffiClient(proxies=proxies, ca_cert=ca_cert)
-
-
-def set_logger_level(verbose: int):
-    """
-    Adjusts the logger's level. This function allows the logging level to be changed at runtime.
-
-    Parameters:
-    - verbose: int {0, 1, 2} (default=2, all logs)
-    """
-    if verbose is None:
-        return
-    level_name = {2: "INFO", 1: "WARNING", 0: "ERROR"}.get(verbose, "INFO")
-    level = getattr(logging, level_name.upper(), None)
-    if level is not None:
-        for logger_name in logging.root.manager.loggerDict:
-            if logger_name.startswith("JobSpy:"):
-                logging.getLogger(logger_name).setLevel(level)
-    else:
-        raise ValueError(f"Invalid log level: {level_name}")
+    del is_tls, clear_cookies  # true no-ops, see above
+    return CurlCffiClient(
+        proxies=proxies,
+        ca_cert=ca_cert,
+        max_attempts=5 if has_retry else 3,
+        wait_initial=float(delay) if has_retry else 0.5,
+    )
 
 
 def markdown_converter(description_html: str):

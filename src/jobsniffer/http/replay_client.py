@@ -16,6 +16,7 @@ Test-time HttpClient. Two modes:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -57,9 +58,7 @@ class RecordedResponse:
         self.text = self.content.decode(exchange.encoding or "utf-8")
 
     def json(self) -> Any:
-        import json as _json
-
-        return _json.loads(self.text)
+        return json.loads(self.text)
 
 
 class ReplayClient:
@@ -78,6 +77,13 @@ class ReplayClient:
         self._exchanges: list[RecordedExchange] = (
             load_fixtures(fixture_path) if mode == "replay" else []
         )
+        # Session-level headers, matching HttpClient.headers. Not consulted
+        # by fixture matching (matching keys on method/url/body signature
+        # only) -- this exists so `self.session.headers.update(...)` call
+        # sites (glassdoor, linkedin, naukri, bdjobs, ziprecruiter) don't
+        # raise AttributeError when a scraper is exercised against a
+        # ReplayClient in tests.
+        self.headers: dict[str, str] = {}
 
         if mode == "record" and recorder is None:
             self._recorder = CurlCffiClient()
@@ -108,6 +114,10 @@ class ReplayClient:
     def _record(
         self, method: str, full_url: str, body_sig: str | None, **kwargs: Any
     ) -> RecordedResponse:
+        # A record-mode client always routes here (see request() above) and
+        # never reads self._exchanges back -- that list is only populated
+        # and consulted in "replay" mode, so recording doesn't maintain a
+        # second, never-read copy of every exchange in memory.
         assert self._recorder is not None  # set in __init__ for mode="record"
         live_response = self._recorder.request(method, full_url, **kwargs)
         exchange = RecordedExchange.from_bytes(
@@ -119,7 +129,6 @@ class ReplayClient:
             request_body_signature=body_sig,
         )
         append_fixture(self._fixture_path, exchange)
-        self._exchanges.append(exchange)
         return RecordedResponse(exchange)
 
     def get(self, url: str, **kwargs: Any) -> RecordedResponse:

@@ -15,26 +15,35 @@ from __future__ import annotations
 from typing import Any, Self, cast
 
 import stamina
-import structlog
 from curl_cffi import requests as curl_requests
 from curl_cffi.const import CurlOpt
 from curl_cffi.requests.exceptions import RequestException
 from curl_cffi.requests.session import HttpMethod
 
+from jobsniffer.http.exceptions import HttpClientError
 from jobsniffer.http.proxy import ProxyRotator
+from jobsniffer.logging_config import create_logger
 
-log = structlog.get_logger(__name__)
+log = create_logger("HttpClient")
 
-_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+# 429 is deliberately NOT auto-retried/raised here: every existing scraper
+# that cares about rate limiting (glassdoor, linkedin, ziprecruiter) already
+# branches on `response.status_code == 429` itself. Auto-raising here would
+# turn that inspectable response into an uncaught exception for callers that
+# don't wrap their request in a try/except -- a real regression, not a
+# deferred one. Only 5xx (unambiguously transient server failures) get the
+# transport-level retry-then-raise treatment.
+_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
 
 
 class CurlCffiClient:
     """HttpClient backed by curl_cffi, impersonating a real Chrome build.
 
-    Retries transient failures (connection errors, 429/5xx) with jittered
-    exponential backoff via stamina; a request that exhausts retries raises
-    the underlying curl_cffi exception rather than returning a fabricated
-    response (P8 -- explicit failure propagation).
+    Retries transient 5xx/connection failures with jittered exponential
+    backoff via stamina; a request that exhausts retries raises the
+    underlying curl_cffi exception rather than returning a fabricated
+    response (P8 -- explicit failure propagation). 429 is returned to the
+    caller as a normal response -- see _RETRYABLE_STATUS comment.
     """
 
     def __init__(
@@ -47,16 +56,38 @@ class CurlCffiClient:
         timeout: float = 30.0,
         max_attempts: int = 3,
         retry_timeout: float = 60.0,
+        wait_initial: float = 0.5,
+        session: curl_requests.Session | None = None,
     ) -> None:
+        """`session` is an injection seam for tests: passing a fake session
+        avoids paying for a real libcurl handle + TLS/JA3 setup just to
+        immediately discard it, which every unit test in tests/http/
+        would otherwise do."""
         self._proxy_rotator = ProxyRotator(proxies)
         self._timeout = timeout
         self._max_attempts = max_attempts
         self._retry_timeout = retry_timeout
+        self._wait_initial = wait_initial
 
-        session_kwargs: dict[str, Any] = {"impersonate": impersonate, "verify": verify}
-        if ca_cert:
-            session_kwargs["curl_options"] = {CurlOpt.CAINFO: ca_cert}
-        self._session = curl_requests.Session(**session_kwargs)
+        if session is not None:
+            self._session = session
+        else:
+            session_kwargs: dict[str, Any] = {
+                "impersonate": impersonate,
+                "verify": verify,
+            }
+            if ca_cert:
+                session_kwargs["curl_options"] = {CurlOpt.CAINFO: ca_cert}
+            self._session = curl_requests.Session(**session_kwargs)
+
+    @property
+    def headers(self) -> Any:
+        """Persistent session-level headers, matching requests.Session's
+        convention. Several scrapers (glassdoor, linkedin, naukri, bdjobs,
+        ziprecruiter) call `self.session.headers.update(...)` once after
+        construction -- this passthrough is required for those call sites
+        to keep working unchanged."""
+        return self._session.headers
 
     def request(self, method: str, url: str, **kwargs: Any) -> curl_requests.Response:
         kwargs.setdefault("timeout", self._timeout)
@@ -68,7 +99,7 @@ class CurlCffiClient:
             on=RequestException,
             attempts=self._max_attempts,
             timeout=self._retry_timeout,
-            wait_initial=0.5,
+            wait_initial=self._wait_initial,
             wait_max=15.0,
             wait_jitter=1.0,
             wait_exp_base=2.0,
@@ -82,10 +113,8 @@ class CurlCffiClient:
                 )
                 if response.status_code in _RETRYABLE_STATUS:
                     log.warning(
-                        "http.retryable_status",
-                        method=method,
-                        url=url,
-                        status_code=response.status_code,
+                        f"http.retryable_status method={method} url={url} "
+                        f"status_code={response.status_code}"
                     )
                     response.raise_for_status()
                 return response
@@ -111,9 +140,13 @@ class CurlCffiClient:
         self.close()
 
 
-class HttpClientUnreachableError(RuntimeError):
+class HttpClientUnreachableError(HttpClientError, RuntimeError):
     """Raised only if stamina's retry loop exits without returning or
-    raising -- a stamina contract violation, not an expected runtime state."""
+    raising -- a stamina contract violation, not an expected runtime state.
+
+    Inherits HttpClientError (this module's own exception taxonomy) as well
+    as RuntimeError (its natural stdlib category), so code that catches
+    HttpClientError broadly still catches this."""
 
     def __init__(self, method: str, url: str) -> None:
         super().__init__(
