@@ -99,12 +99,23 @@ def fetch_page(
 ) -> tuple[list[dict], str | None]:
     """Fetches one page of GraphQL results. Returns ([], None) on a
     non-2xx response -- the caller (Indeed.scrape's fallback branch)
-    already has nothing better to fall back to, so this just stops."""
+    already has nothing better to fall back to, so this just stops.
+
+    Live-caught bug (reproduced against the real API, not just inferred):
+    distance=None -- ScraperInput's actual default, despite the project's
+    own README documenting "distance (int): in miles, default 50" -- used
+    to render as the literal string `radius: None` in the GraphQL query
+    text, which the API silently rejects as an empty/errored jobSearch
+    rather than raising, making every default-distance search return zero
+    results through this fallback. Confirmed live: identical query with
+    `radius: 50` returns 100 results with no errors.
+    """
     search_term_escaped = search_term.replace('"', '\\"') if search_term else ""
+    effective_distance = distance if distance is not None else 50
     query = job_search_query.format(
         what=(f'what: "{search_term_escaped}"' if search_term_escaped else ""),
         location=(
-            f'location: {{where: "{location}", radius: {distance}, radiusUnit: MILES}}'
+            f'location: {{where: "{location}", radius: {effective_distance}, radiusUnit: MILES}}'
             if location
             else ""
         ),

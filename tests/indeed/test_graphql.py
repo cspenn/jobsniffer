@@ -108,6 +108,61 @@ def test_fetch_page_extracts_results_and_next_cursor():
     assert "engineer" in kwargs["json"]["query"]
 
 
+def test_fetch_page_defaults_distance_to_50_when_none():
+    """Live-caught bug: distance=None (ScraperInput's actual default)
+    used to render as the literal string "radius: None" in the GraphQL
+    query text -- invalid, and silently rejected by the API as an
+    errored/empty jobSearch rather than raising. Confirmed live against
+    the real endpoint before fixing: identical query with radius: 50
+    returns 100 results with no errors; radius: None returns zero."""
+    session = FakeSession(
+        FakeResponse(
+            ok=True,
+            text=json.dumps({"data": {"jobSearch": {"pageInfo": {}, "results": []}}}),
+        )
+    )
+    fetch_page(
+        session,
+        api_url="https://apis.indeed.com/graphql",
+        api_country_code="US",
+        search_term="engineer",
+        location="Austin, TX",
+        distance=None,
+        hours_old=None,
+        easy_apply=None,
+        job_type=None,
+        is_remote=False,
+        cursor=None,
+    )
+    _url, kwargs = session.calls[0]
+    assert "radius: 50" in kwargs["json"]["query"]
+    assert "radius: None" not in kwargs["json"]["query"]
+
+
+def test_fetch_page_uses_explicit_distance_when_provided():
+    session = FakeSession(
+        FakeResponse(
+            ok=True,
+            text=json.dumps({"data": {"jobSearch": {"pageInfo": {}, "results": []}}}),
+        )
+    )
+    fetch_page(
+        session,
+        api_url="https://apis.indeed.com/graphql",
+        api_country_code="US",
+        search_term="engineer",
+        location="Austin, TX",
+        distance=10,
+        hours_old=None,
+        easy_apply=None,
+        job_type=None,
+        is_remote=False,
+        cursor=None,
+    )
+    _url, kwargs = session.calls[0]
+    assert "radius: 10" in kwargs["json"]["query"]
+
+
 _SAMPLE_JOB = {
     "key": "abc123def456",
     "title": "Senior Software Engineer",
