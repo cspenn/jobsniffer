@@ -23,7 +23,7 @@ from jobsniffer.http.protocol import HttpClient
 from jobsniffer.indeed.constant import api_headers, job_search_query
 from jobsniffer.indeed.util import get_compensation, get_job_type
 from jobsniffer.indeed.util import is_job_remote as is_job_remote_graphql
-from jobsniffer.model import DescriptionFormat, JobPost, JobType, Location
+from jobsniffer.model import DEFAULT_DISTANCE_MILES, DescriptionFormat, JobPost, JobType, Location
 from jobsniffer.util import extract_emails_from_text, markdown_converter
 
 
@@ -111,7 +111,7 @@ def fetch_page(
     `radius: 50` returns 100 results with no errors.
     """
     search_term_escaped = search_term.replace('"', '\\"') if search_term else ""
-    effective_distance = distance if distance is not None else 50
+    effective_distance = distance if distance is not None else DEFAULT_DISTANCE_MILES
     query = job_search_query.format(
         what=(f'what: "{search_term_escaped}"' if search_term_escaped else ""),
         location=(

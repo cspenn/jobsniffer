@@ -13,7 +13,7 @@ from jobsniffer.indeed import Indeed
 from jobsniffer.linkedin import LinkedIn
 from jobsniffer.naukri import Naukri
 from jobsniffer.model import JobType, Location, JobResponse, Country
-from jobsniffer.model import SalarySource, ScraperInput, Site
+from jobsniffer.model import SalarySource, ScraperInput, Site, DEFAULT_DISTANCE_MILES
 from jobsniffer.util import (
     set_logger_level,
     extract_salary,
@@ -33,7 +33,7 @@ def scrape_jobs(
     search_term: str | None = None,
     google_search_term: str | None = None,
     location: str | None = None,
-    distance: int | None = 50,
+    distance: int | None = DEFAULT_DISTANCE_MILES,
     is_remote: bool = False,
     job_type: str | None = None,
     easy_apply: bool | None = None,
