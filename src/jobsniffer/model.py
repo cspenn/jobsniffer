@@ -300,13 +300,12 @@ class SalarySource(Enum):
     DESCRIPTION = "description"
 
 
-# README-documented default search radius. Named here so the two places
-# that need a concrete miles value when no distance is given --
-# scrape_jobs()'s public default and jobsniffer.indeed.graphql.fetch_page's
-# substitution for ScraperInput.distance=None (a real gap: ScraperInput
-# itself defaults distance to None, so any caller that constructs one
-# directly, bypassing scrape_jobs(), can hit that None) -- share one
-# literal instead of two that can silently drift apart.
+# README-documented default search radius, shared so it can't drift.
+# ScraperInput.distance itself defaults to this (see below) so any caller
+# that constructs one directly, bypassing scrape_jobs()'s own default,
+# still gets 50 rather than None. jobsniffer.indeed.graphql.fetch_page
+# additionally substitutes it for an *explicit* distance=None (a caller
+# opting out on purpose), which this default doesn't and shouldn't cover.
 DEFAULT_DISTANCE_MILES = 50
 
 
@@ -317,7 +316,12 @@ class ScraperInput(BaseModel):
 
     location: str | None = None
     country: Country | None = Country.USA
-    distance: int | None = None
+    # Defaults to DEFAULT_DISTANCE_MILES, not None: explicit `distance=None`
+    # is still expressible (indeed.search's omit-radius path relies on
+    # exactly that), but a caller who leaves this field out entirely -- the
+    # common case -- gets the documented default rather than silently
+    # falling through to whatever each site does with a missing radius.
+    distance: int | None = DEFAULT_DISTANCE_MILES
     is_remote: bool = False
     job_type: JobType | None = None
     easy_apply: bool | None = None
