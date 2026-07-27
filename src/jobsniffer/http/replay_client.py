@@ -55,7 +55,20 @@ class RecordedResponse:
         self.headers = exchange.headers
         self.url = exchange.url
         self.content = exchange.content
-        self.text = self.content.decode(exchange.encoding or "utf-8")
+
+    @property
+    def text(self) -> str:
+        """Lazy, matching curl_cffi.requests.Response.text exactly (verified
+        against its source): decoding only happens on access, using
+        errors="replace" rather than raising. This matters because binary
+        fixtures (e.g. ZipRecruiter's protobuf detail responses) are never
+        valid UTF-8 -- constructing a RecordedResponse for one must not
+        crash before the caller even gets a chance to read `.content`
+        instead of `.text`, the same way a real CurlCffiClient wouldn't."""
+        try:
+            return self.content.decode(self._exchange.encoding or "utf-8", errors="replace")
+        except LookupError:
+            return self.content.decode("utf-8", errors="replace")
 
     def json(self) -> Any:
         return json.loads(self.text)

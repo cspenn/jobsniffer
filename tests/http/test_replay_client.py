@@ -3,7 +3,7 @@ import pytest
 from jobsniffer.http.curl_client import CurlCffiClient
 from jobsniffer.http.exceptions import FixtureNotFoundError
 from jobsniffer.http.fixtures import RecordedExchange, append_fixture
-from jobsniffer.http.replay_client import ReplayClient
+from jobsniffer.http.replay_client import RecordedResponse, ReplayClient
 
 
 @pytest.fixture
@@ -119,3 +119,33 @@ def test_record_mode_without_explicit_recorder_creates_a_real_curl_client(tmp_pa
     path = tmp_path / "recorded.jsonl"
     client = ReplayClient(path, mode="record")
     assert isinstance(client._recorder, CurlCffiClient)
+
+
+def test_recorded_response_text_is_lazy_and_never_crashes_on_binary_content():
+    """ZipRecruiter's protobuf detail responses are never valid UTF-8 --
+    constructing a RecordedResponse for one must not raise before the
+    caller reads `.content` instead of `.text`, matching real
+    curl_cffi.requests.Response behavior (its .text is also lazy)."""
+    binary_exchange = RecordedExchange.from_bytes(
+        method="POST",
+        url="https://www.ziprecruiter.com/GetJobDetails",
+        status_code=200,
+        content=b"\xff\xfe\x00binary-protobuf-garbage\x80\x81",
+        encoding=None,
+    )
+    response = RecordedResponse(binary_exchange)  # must not raise
+    assert response.content == b"\xff\xfe\x00binary-protobuf-garbage\x80\x81"
+    # .text is replacement-decoded, not raised, when actually accessed
+    assert isinstance(response.text, str)
+
+
+def test_recorded_response_text_falls_back_on_unknown_encoding_name():
+    exchange = RecordedExchange.from_bytes(
+        method="GET",
+        url="https://example.com/weird-encoding",
+        status_code=200,
+        content=b"hello",
+        encoding="not-a-real-codec",
+    )
+    response = RecordedResponse(exchange)
+    assert response.text == "hello"

@@ -95,3 +95,35 @@ def test_compute_body_signature_handles_raw_bytes_and_str_and_dict_data():
     # so they're expected to produce the same signature.
     assert compute_body_signature(data=b"raw") == compute_body_signature(data="raw")
     assert compute_body_signature(data=b"raw") != compute_body_signature(data=b"other")
+
+
+def test_from_bytes_strips_set_cookie_header():
+    exchange = RecordedExchange.from_bytes(
+        method="GET",
+        url="https://example.com",
+        status_code=200,
+        content=b"x",
+        headers={
+            "content-type": "text/html",
+            "Set-Cookie": "JSESSIONID=abc123; Secure",
+        },
+    )
+    assert "Set-Cookie" not in exchange.headers
+    assert "set-cookie" not in exchange.headers
+    assert exchange.headers == {"content-type": "text/html"}
+
+
+def test_from_bytes_strips_authorization_and_cookie_headers_case_insensitively():
+    exchange = RecordedExchange.from_bytes(
+        method="GET",
+        url="https://example.com",
+        status_code=200,
+        content=b"x",
+        headers={
+            "AUTHORIZATION": "Bearer secret-token",
+            "Cookie": "session=abc",
+            "Proxy-Authorization": "Basic xyz",
+            "x-safe-header": "keep-me",
+        },
+    )
+    assert exchange.headers == {"x-safe-header": "keep-me"}

@@ -71,7 +71,14 @@ markers = [
 addopts = "-m 'not live'"
 
 [tool.coverage.run]
-source = ["src/jobsniffer"]
+source = ["src/jobsniffer", "src/scripts"]
+# record_linkedin_fixtures.py is, by design, a live-network interactive tool
+# (see its own module docstring) that seeds tests/fixtures/linkedin.jsonl --
+# unit-testing it would mean either mocking away the exact thing it exists
+# to do (make one real request) or violating the "no network in the default
+# suite" policy. Documented exclusion per the modernization plan's coverage
+# policy, not a silently lowered gate.
+omit = ["src/scripts/record_linkedin_fixtures.py"]
 
 [tool.coverage.report]
 exclude_also = [

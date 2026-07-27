@@ -23,6 +23,22 @@ from typing import Any
 
 from jobsniffer.http.exceptions import FixtureFileError
 
+# Fixtures get committed to a public repo. Response headers carry no
+# functional value for replay or parsing (parsers work off `.content`;
+# `encoding` is tracked separately) but sites do return session/credential
+# material in them (e.g. LinkedIn's anonymous jobs-guest search sets a
+# fresh Set-Cookie: JSESSIONID=... on every request) -- strip it here, in
+# the one constructor every fixture-writing path (har_to_fixtures.py,
+# ReplayClient's record mode) goes through, rather than trusting each
+# caller to remember to filter.
+_SENSITIVE_HEADER_NAMES = frozenset(
+    {"set-cookie", "cookie", "authorization", "proxy-authorization"}
+)
+
+
+def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in headers.items() if k.lower() not in _SENSITIVE_HEADER_NAMES}
+
 
 def compute_body_signature(*, json_body: Any = None, data: Any = None) -> str | None:
     """Stable signature for a request body, used to disambiguate fixtures
@@ -75,7 +91,7 @@ class RecordedExchange:
             url=url,
             status_code=status_code,
             content_b64=base64.b64encode(content).decode("ascii"),
-            headers=headers or {},
+            headers=_sanitize_headers(headers or {}),
             encoding=encoding,
             request_body_signature=request_body_signature,
         )
