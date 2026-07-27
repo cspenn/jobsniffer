@@ -1,26 +1,31 @@
 from __future__ import annotations
 
-import math
-from datetime import datetime
-from typing import Tuple
-
-from jobsniffer.indeed.constant import job_search_query, api_headers
-from jobsniffer.indeed.util import is_job_remote, get_compensation, get_job_type
+from jobsniffer.exception import IndeedException
+from jobsniffer.indeed import graphql as indeed_graphql
+from jobsniffer.indeed.detail import fetch_job_detail
+from jobsniffer.indeed.parse import (
+    compensation_from_extracted_salary,
+    compensation_from_salary_info_model,
+    date_posted_from_epoch_millis,
+    extract_detail_description,
+    is_job_remote,
+    job_types_from_taxonomy,
+)
+from jobsniffer.indeed.search import fetch_search_page
 from jobsniffer.model import (
+    DescriptionFormat,
+    JobPost,
+    JobResponse,
+    Location,
     Scraper,
     ScraperInput,
     Site,
-    JobPost,
-    Location,
-    JobResponse,
-    JobType,
-    DescriptionFormat,
 )
 from jobsniffer.util import (
+    create_logger,
+    create_session,
     extract_emails_from_text,
     markdown_converter,
-    create_session,
-    create_logger,
 )
 
 log = create_logger("Indeed")
@@ -28,233 +33,182 @@ log = create_logger("Indeed")
 
 class Indeed(Scraper):
     def __init__(
-        self, proxies: list[str] | str | None = None, ca_cert: str | None = None, user_agent: str | None = None
+        self,
+        proxies: list[str] | str | None = None,
+        ca_cert: str | None = None,
+        user_agent: str | None = None,
     ):
-        """
-        Initializes IndeedScraper with the Indeed API url
-        """
-        super().__init__(Site.INDEED, proxies=proxies)
+        """Initializes IndeedScraper.
 
-        self.session = create_session(
-            proxies=self.proxies, ca_cert=ca_cert, is_tls=False
-        )
-        self.scraper_input = None
-        self.jobs_per_page = 100
-        self.num_workers = 10
-        self.seen_urls = set()
-        self.headers = None
-        self.api_country_code = None
-        self.base_url = None
-        self.api_url = "https://apis.indeed.com/graphql"
+        Primary path is the mosaic HTML search + /viewjob detail flow
+        (jobsniffer.indeed.search/detail/parse); the GraphQL API
+        (jobsniffer.indeed.graphql) is a fallback used only when the HTML
+        search returns no results at all, e.g. Indeed serving a
+        block/CAPTCHA page -- see docs/2026-07-27-jobsniffer-modernization-
+        plan.md, Phase 3a, for why HTML is primary (the search response
+        alone was found to carry only truncated snippets and estimated
+        salaries; the detail fetch is what supplies the full description
+        and authoritative salary the graphql path already returned
+        directly).
+
+        scraper_input/base_url are threaded through the scrape/helper
+        methods as explicit parameters rather than stored on self: the
+        upstream pattern of stashing them as instance state made every
+        helper's actual dependencies implicit (and unverifiable by mypy,
+        since they're only guaranteed set after scrape() runs).
+        """
+        super().__init__(Site.INDEED, proxies=proxies, ca_cert=ca_cert, user_agent=user_agent)
+        self.session = create_session(proxies=proxies, ca_cert=ca_cert)
 
     def scrape(self, scraper_input: ScraperInput) -> JobResponse:
-        """
-        Scrapes Indeed for jobs with scraper_input criteria
-        :param scraper_input:
-        :return: job_response
-        """
-        self.scraper_input = scraper_input
-        domain, self.api_country_code = self.scraper_input.country.indeed_domain_value
-        self.base_url = f"https://{domain}.indeed.com"
-        self.headers = api_headers.copy()
-        self.headers["indeed-co"] = self.scraper_input.country.indeed_domain_value
-        job_list = []
-        page = 1
+        """Scrapes Indeed for jobs matching scraper_input criteria."""
+        if scraper_input.country is None:
+            raise IndeedException("Indeed requires a country to resolve its domain")
+        domain, api_country_code = scraper_input.country.indeed_domain_value
+        base_url = f"https://{domain}.indeed.com"
 
-        cursor = None
+        job_list = self._scrape_html(scraper_input, base_url)
+        if not job_list:
+            log.info("HTML search returned no results, falling back to GraphQL")
+            job_list = self._scrape_graphql(scraper_input, base_url, api_country_code)
 
-        while len(self.seen_urls) < scraper_input.results_wanted + scraper_input.offset:
-            log.info(
-                f"search page: {page} / {math.ceil(scraper_input.results_wanted / self.jobs_per_page)}"
-            )
-            jobs, cursor = self._scrape_page(cursor)
-            if not jobs:
-                log.info(f"found no jobs on page: {page}")
-                break
-            job_list += jobs
-            page += 1
         return JobResponse(
             jobs=job_list[
-                scraper_input.offset : scraper_input.offset
-                + scraper_input.results_wanted
+                scraper_input.offset : scraper_input.offset + scraper_input.results_wanted
             ]
         )
 
-    def _scrape_page(self, cursor: str | None) -> Tuple[list[JobPost], str | None]:
-        """
-        Scrapes a page of Indeed for jobs with scraper_input criteria
-        :param cursor:
-        :return: jobs found on page, next page cursor
-        """
-        jobs = []
-        new_cursor = None
-        filters = self._build_filters()
-        search_term = (
-            self.scraper_input.search_term.replace('"', '\\"')
-            if self.scraper_input.search_term
-            else ""
-        )
-        query = job_search_query.format(
-            what=(f'what: "{search_term}"' if search_term else ""),
-            location=(
-                f'location: {{where: "{self.scraper_input.location}", radius: {self.scraper_input.distance}, radiusUnit: MILES}}'
-                if self.scraper_input.location
-                else ""
-            ),
-            dateOnIndeed=self.scraper_input.hours_old,
-            cursor=f'cursor: "{cursor}"' if cursor else "",
-            filters=filters,
-        )
-        payload = {
-            "query": query,
-        }
-        api_headers_temp = api_headers.copy()
-        api_headers_temp["indeed-co"] = self.api_country_code
-        response = self.session.post(
-            self.api_url,
-            headers=api_headers_temp,
-            json=payload,
-            timeout=10,
-            verify=False,
-        )
-        if not response.ok:
-            log.info(
-                f"responded with status code: {response.status_code} (submit GitHub issue if this appears to be a bug)"
+    def _scrape_html(self, scraper_input: ScraperInput, base_url: str) -> list[JobPost]:
+        job_list: list[JobPost] = []
+        seen_keys: set[str] = set()
+        start = 0
+        target = scraper_input.results_wanted + scraper_input.offset
+
+        while len(seen_keys) < target:
+            results = fetch_search_page(
+                self.session,
+                base_url=base_url,
+                search_term=scraper_input.search_term,
+                location=scraper_input.location,
+                distance=scraper_input.distance,
+                hours_old=scraper_input.hours_old,
+                start=start,
+                timeout=scraper_input.request_timeout,
             )
-            return jobs, new_cursor
-        data = response.json()
-        jobs = data["data"]["jobSearch"]["results"]
-        new_cursor = data["data"]["jobSearch"]["pageInfo"]["nextCursor"]
+            if not results:
+                break
 
-        job_list = []
-        for job in jobs:
-            processed_job = self._process_job(job["job"])
-            if processed_job:
-                job_list.append(processed_job)
+            new_this_page = 0
+            for job in results:
+                job_key = job.get("jobkey")
+                if not job_key or job_key in seen_keys:
+                    continue
+                seen_keys.add(job_key)
+                new_this_page += 1
+                post = self._build_job_post(job, scraper_input, base_url)
+                if post:
+                    job_list.append(post)
+                if len(seen_keys) >= target:
+                    break
 
-        return job_list, new_cursor
+            if new_this_page == 0:
+                # Every result on this page was already seen -- Indeed
+                # isn't advancing (end of results), stop rather than loop
+                # on the same page forever.
+                break
+            start += len(results)
 
-    def _build_filters(self):
-        """
-        Builds the filters dict for job type/is_remote. If hours_old is provided, composite filter for job_type/is_remote is not possible.
-        IndeedApply: filters: { keyword: { field: "indeedApplyScope", keys: ["DESKTOP"] } }
-        """
-        filters_str = ""
-        if self.scraper_input.hours_old:
-            filters_str = """
-            filters: {{
-                date: {{
-                  field: "dateOnIndeed",
-                  start: "{start}h"
-                }}
-            }}
-            """.format(
-                start=self.scraper_input.hours_old
+        return job_list
+
+    def _build_job_post(
+        self, job: dict, scraper_input: ScraperInput, base_url: str
+    ) -> JobPost | None:
+        job_key = job["jobkey"]
+        detail_body = fetch_job_detail(
+            self.session,
+            base_url=base_url,
+            job_key=job_key,
+            timeout=scraper_input.request_timeout,
+        )
+
+        description = None
+        compensation = None
+        if detail_body:
+            description = extract_detail_description(detail_body)
+            compensation = compensation_from_salary_info_model(
+                detail_body.get("salaryInfoModel")
             )
-        elif self.scraper_input.easy_apply:
-            filters_str = """
-            filters: {
-                keyword: {
-                  field: "indeedApplyScope",
-                  keys: ["DESKTOP"]
-                }
-            }
-            """
-        elif self.scraper_input.job_type or self.scraper_input.is_remote:
-            job_type_key_mapping = {
-                JobType.FULL_TIME: "CF3CP",
-                JobType.PART_TIME: "75GKK",
-                JobType.CONTRACT: "NJXCK",
-                JobType.INTERNSHIP: "VDTG7",
-            }
+        if description is None:
+            # Detail fetch failed or the page shape changed -- fall back
+            # to the truncated search-result snippet rather than an empty
+            # description (P8: degrade, don't silently drop the field).
+            description = job.get("snippet")
+        if compensation is None:
+            compensation = compensation_from_extracted_salary(job)
 
-            keys = []
-            if self.scraper_input.job_type:
-                key = job_type_key_mapping[self.scraper_input.job_type]
-                keys.append(key)
-
-            if self.scraper_input.is_remote:
-                keys.append("DSQF7")
-
-            if keys:
-                keys_str = '", "'.join(keys)
-                filters_str = f"""
-                filters: {{
-                  composite: {{
-                    filters: [{{
-                      keyword: {{
-                        field: "attributes",
-                        keys: ["{keys_str}"]
-                      }}
-                    }}]
-                  }}
-                }}
-                """
-        return filters_str
-
-    def _process_job(self, job: dict) -> JobPost | None:
-        """
-        Parses the job dict into JobPost model
-        :param job: dict to parse
-        :return: JobPost if it's a new job
-        """
-        job_url = f'{self.base_url}/viewjob?jk={job["key"]}'
-        if job_url in self.seen_urls:
-            return
-        self.seen_urls.add(job_url)
-        description = job["description"]["html"]
-        if self.scraper_input.description_format == DescriptionFormat.MARKDOWN:
+        if description and scraper_input.description_format == DescriptionFormat.MARKDOWN:
             description = markdown_converter(description)
 
-        job_type = get_job_type(job["attributes"])
-        timestamp_seconds = job["datePublished"] / 1000
-        date_posted = datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d")
-        employer = job["employer"].get("dossier") if job["employer"] else None
-        employer_details = employer.get("employerDetails", {}) if employer else {}
-        rel_url = job["employer"]["relativeCompanyPageUrl"] if job["employer"] else None
         return JobPost(
-            id=f'in-{job["key"]}',
-            title=job["title"],
-            description=description,
-            company_name=job["employer"].get("name") if job.get("employer") else None,
-            company_url=(f"{self.base_url}{rel_url}" if job["employer"] else None),
-            company_url_direct=(
-                employer["links"]["corporateWebsite"] if employer else None
-            ),
+            id=f"in-{job_key}",
+            title=job.get("title", "N/A"),
+            company_name=job.get("company"),
+            job_url=f"{base_url}/viewjob?jk={job_key}",
             location=Location(
-                city=job.get("location", {}).get("city"),
-                state=job.get("location", {}).get("admin1Code"),
-                country=job.get("location", {}).get("countryCode"),
+                city=job.get("jobLocationCity"),
+                state=job.get("jobLocationState"),
+                country=scraper_input.country,
             ),
-            job_type=job_type,
-            compensation=get_compensation(job["compensation"]),
-            date_posted=date_posted,
-            job_url=job_url,
-            job_url_direct=(
-                job["recruit"].get("viewJobUrl") if job.get("recruit") else None
-            ),
+            description=description,
+            job_type=job_types_from_taxonomy(job.get("taxonomyAttributes")),
+            compensation=compensation,
+            date_posted=date_posted_from_epoch_millis(job.get("pubDate")),
+            is_remote=is_job_remote(job),
             emails=extract_emails_from_text(description) if description else None,
-            is_remote=is_job_remote(job, description),
-            company_addresses=(
-                employer_details["addresses"][0]
-                if employer_details.get("addresses")
-                else None
-            ),
-            company_industry=(
-                employer_details["industry"]
-                .replace("Iv1", "")
-                .replace("_", " ")
-                .title()
-                .strip()
-                if employer_details.get("industry")
-                else None
-            ),
-            company_num_employees=employer_details.get("employeesLocalizedLabel"),
-            company_revenue=employer_details.get("revenueLocalizedLabel"),
-            company_description=employer_details.get("briefDescription"),
-            company_logo=(
-                employer["images"].get("squareLogoUrl")
-                if employer and employer.get("images")
-                else None
-            ),
         )
+
+    def _scrape_graphql(
+        self, scraper_input: ScraperInput, base_url: str, api_country_code: str
+    ) -> list[JobPost]:
+        job_list: list[JobPost] = []
+        seen_keys: set[str] = set()
+        cursor: str | None = None
+        target = scraper_input.results_wanted + scraper_input.offset
+
+        while len(seen_keys) < target:
+            results, cursor = indeed_graphql.fetch_page(
+                self.session,
+                api_url="https://apis.indeed.com/graphql",
+                api_country_code=api_country_code,
+                search_term=scraper_input.search_term,
+                location=scraper_input.location,
+                distance=scraper_input.distance,
+                hours_old=scraper_input.hours_old,
+                easy_apply=scraper_input.easy_apply,
+                job_type=scraper_input.job_type,
+                is_remote=scraper_input.is_remote,
+                cursor=cursor,
+                timeout=scraper_input.request_timeout,
+            )
+            if not results:
+                break
+
+            for result in results:
+                job = result["job"]
+                if job["key"] in seen_keys:
+                    continue
+                seen_keys.add(job["key"])
+                post = indeed_graphql.job_post_from_graphql_result(
+                    job,
+                    base_url=base_url,
+                    description_format=scraper_input.description_format,
+                )
+                if post:
+                    job_list.append(post)
+                if len(seen_keys) >= target:
+                    break
+
+            if not cursor:
+                break
+
+        return job_list

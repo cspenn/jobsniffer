@@ -324,7 +324,11 @@ class ScraperInput(BaseModel):
 
 class Scraper(ABC):
     def __init__(
-        self, site: Site, proxies: list[str] | None = None, ca_cert: str | None = None, user_agent: str | None = None
+        self,
+        site: Site,
+        proxies: list[str] | str | None = None,
+        ca_cert: str | None = None,
+        user_agent: str | None = None,
     ):
         self.site = site
         self.proxies = proxies

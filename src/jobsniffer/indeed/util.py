@@ -1,4 +1,4 @@
-from jobsniffer.model import CompensationInterval, JobType, Compensation
+from jobsniffer.model import Compensation, CompensationInterval, JobType
 from jobsniffer.util import get_enum_from_job_type
 
 
