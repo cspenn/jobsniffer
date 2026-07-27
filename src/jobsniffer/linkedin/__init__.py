@@ -11,16 +11,16 @@ import regex as re
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-from jobspy.exception import LinkedInException
-from jobspy.linkedin.constant import headers
-from jobspy.linkedin.util import (
+from jobsniffer.exception import LinkedInException
+from jobsniffer.linkedin.constant import headers
+from jobsniffer.linkedin.util import (
     is_job_remote,
     job_type_code,
     parse_job_type,
     parse_job_level,
     parse_company_industry
 )
-from jobspy.model import (
+from jobsniffer.model import (
     JobPost,
     Location,
     JobResponse,
@@ -31,7 +31,7 @@ from jobspy.model import (
     ScraperInput,
     Site,
 )
-from jobspy.util import (
+from jobsniffer.util import (
     extract_emails_from_text,
     currency_parser,
     markdown_converter,

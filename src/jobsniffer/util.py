@@ -11,7 +11,7 @@ import urllib3
 from markdownify import markdownify as md
 from requests.adapters import HTTPAdapter, Retry
 
-from jobspy.model import CompensationInterval, JobType, Site
+from jobsniffer.model import CompensationInterval, JobType, Site
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 

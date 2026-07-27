@@ -5,7 +5,7 @@ import time
 
 from bs4 import BeautifulSoup
 
-from jobspy.model import (
+from jobsniffer.model import (
     Scraper,
     ScraperInput,
     Site,
@@ -14,7 +14,7 @@ from jobspy.model import (
     Location,
     Country,
 )
-from jobspy.util import create_logger, create_session
+from jobsniffer.util import create_logger, create_session
 
 log = create_logger("Bayt")
 

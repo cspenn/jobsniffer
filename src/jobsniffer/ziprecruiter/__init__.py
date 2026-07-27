@@ -9,15 +9,15 @@ from datetime import datetime
 
 from bs4 import BeautifulSoup
 
-from jobspy.ziprecruiter.constant import headers, get_cookie_data
-from jobspy.util import (
+from jobsniffer.ziprecruiter.constant import headers, get_cookie_data
+from jobsniffer.util import (
     extract_emails_from_text,
     create_session,
     markdown_converter,
     remove_attributes,
     create_logger,
 )
-from jobspy.model import (
+from jobsniffer.model import (
     JobPost,
     Compensation,
     Location,
@@ -28,7 +28,7 @@ from jobspy.model import (
     ScraperInput,
     Site,
 )
-from jobspy.ziprecruiter.util import get_job_type_enum, add_params
+from jobsniffer.ziprecruiter.util import get_job_type_enum, add_params
 
 log = create_logger("ZipRecruiter")
 

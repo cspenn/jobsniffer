@@ -7,20 +7,20 @@ from typing import Tuple
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from jobspy.glassdoor.constant import fallback_token, query_template, headers
-from jobspy.glassdoor.util import (
+from jobsniffer.glassdoor.constant import fallback_token, query_template, headers
+from jobsniffer.glassdoor.util import (
     get_cursor_for_page,
     parse_compensation,
     parse_location,
 )
-from jobspy.util import (
+from jobsniffer.util import (
     extract_emails_from_text,
     create_logger,
     create_session,
     markdown_converter,
 )
-from jobspy.exception import GlassdoorException
-from jobspy.model import (
+from jobsniffer.exception import GlassdoorException
+from jobsniffer.model import (
     JobPost,
     JobResponse,
     DescriptionFormat,

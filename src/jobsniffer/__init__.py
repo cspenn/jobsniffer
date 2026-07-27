@@ -5,16 +5,16 @@ from typing import Tuple
 
 import pandas as pd
 
-from jobspy.bayt import BaytScraper
-from jobspy.bdjobs import BDJobs
-from jobspy.glassdoor import Glassdoor
-from jobspy.google import Google
-from jobspy.indeed import Indeed
-from jobspy.linkedin import LinkedIn
-from jobspy.naukri import Naukri
-from jobspy.model import JobType, Location, JobResponse, Country
-from jobspy.model import SalarySource, ScraperInput, Site
-from jobspy.util import (
+from jobsniffer.bayt import BaytScraper
+from jobsniffer.bdjobs import BDJobs
+from jobsniffer.glassdoor import Glassdoor
+from jobsniffer.google import Google
+from jobsniffer.indeed import Indeed
+from jobsniffer.linkedin import LinkedIn
+from jobsniffer.naukri import Naukri
+from jobsniffer.model import JobType, Location, JobResponse, Country
+from jobsniffer.model import SalarySource, ScraperInput, Site
+from jobsniffer.util import (
     set_logger_level,
     extract_salary,
     create_logger,
@@ -23,7 +23,7 @@ from jobspy.util import (
     convert_to_annual,
     desired_order,
 )
-from jobspy.ziprecruiter import ZipRecruiter
+from jobsniffer.ziprecruiter import ZipRecruiter
 
 
 # Update the SCRAPER_MAPPING dictionary in the scrape_jobs function

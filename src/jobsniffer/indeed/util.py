@@ -1,5 +1,5 @@
-from jobspy.model import CompensationInterval, JobType, Compensation
-from jobspy.util import get_enum_from_job_type
+from jobsniffer.model import CompensationInterval, JobType, Compensation
+from jobsniffer.util import get_enum_from_job_type
 
 
 def get_job_type(attributes: list) -> list[JobType]:

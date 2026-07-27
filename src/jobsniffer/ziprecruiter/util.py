@@ -1,4 +1,4 @@
-from jobspy.model import JobType
+from jobsniffer.model import JobType
 
 
 def add_params(scraper_input) -> dict[str, str | int]:

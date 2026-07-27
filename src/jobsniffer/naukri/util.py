@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from bs4 import BeautifulSoup
-from jobspy.model import JobType, Location
-from jobspy.util import get_enum_from_job_type
+from jobsniffer.model import JobType, Location
+from jobsniffer.util import get_enum_from_job_type
 
 
 def parse_job_type(soup: BeautifulSoup |str) -> list[JobType] | None:

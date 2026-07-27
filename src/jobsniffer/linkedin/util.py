@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
 
-from jobspy.model import JobType, Location
-from jobspy.util import get_enum_from_job_type
+from jobsniffer.model import JobType, Location
+from jobsniffer.util import get_enum_from_job_type
 
 
 def job_type_code(job_type_enum: JobType) -> str:

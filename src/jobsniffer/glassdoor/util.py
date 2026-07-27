@@ -1,4 +1,4 @@
-from jobspy.model import Compensation, CompensationInterval, Location, JobType
+from jobsniffer.model import Compensation, CompensationInterval, Location, JobType
 
 
 def parse_compensation(data: dict) -> Compensation | None:

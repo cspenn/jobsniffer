@@ -10,15 +10,15 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-from jobspy.exception import BDJobsException
-from jobspy.bdjobs.constant import headers, search_params
-from jobspy.bdjobs.util import (
+from jobsniffer.exception import BDJobsException
+from jobsniffer.bdjobs.constant import headers, search_params
+from jobsniffer.bdjobs.util import (
     parse_location,
     parse_date,
     find_job_listings,
     is_job_remote,
 )
-from jobspy.model import (
+from jobsniffer.model import (
     JobPost,
     Location,
     JobResponse,
@@ -28,7 +28,7 @@ from jobspy.model import (
     Site,
     DescriptionFormat,
 )
-from jobspy.util import (
+from jobsniffer.util import (
     extract_emails_from_text,
     create_session,
     create_logger,

@@ -4,9 +4,9 @@ import math
 from datetime import datetime
 from typing import Tuple
 
-from jobspy.indeed.constant import job_search_query, api_headers
-from jobspy.indeed.util import is_job_remote, get_compensation, get_job_type
-from jobspy.model import (
+from jobsniffer.indeed.constant import job_search_query, api_headers
+from jobsniffer.indeed.util import is_job_remote, get_compensation, get_job_type
+from jobsniffer.model import (
     Scraper,
     ScraperInput,
     Site,
@@ -16,7 +16,7 @@ from jobspy.model import (
     JobType,
     DescriptionFormat,
 )
-from jobspy.util import (
+from jobsniffer.util import (
     extract_emails_from_text,
     markdown_converter,
     create_session,

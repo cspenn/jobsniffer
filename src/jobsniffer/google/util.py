@@ -1,6 +1,6 @@
 import re
 
-from jobspy.util import create_logger
+from jobsniffer.util import create_logger
 
 log = create_logger("Google")
 

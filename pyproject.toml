@@ -1,33 +1,68 @@
 [build-system]
-requires = [ "poetry-core",]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry]
-name = "python-jobspy"
-version = "1.1.82"
-description = "Job scraper for LinkedIn, Indeed, Glassdoor, ZipRecruiter & Bayt"
-authors = ["Cullen Watson <cullen@cullenwatson.com>", "Zachary Hampton <zachary@zacharysproducts.com>"]
-homepage = "https://github.com/cullenwatson/JobSpy"
+[project]
+name = "jobsniffer"
+version = "0.1.0"
+description = "Modernized job scraper library for LinkedIn, Indeed, and ZipRecruiter, forked from JobSpy"
 readme = "README.md"
-keywords = [ "jobs-scraper", "linkedin", "indeed", "glassdoor", "ziprecruiter", "bayt", "naukri"]
-[[tool.poetry.packages]]
-include = "jobspy"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Cullen Watson", email = "cullen@cullenwatson.com" },
+    { name = "Zachary Hampton", email = "zachary@zacharysproducts.com" },
+    { name = "Christopher S. Penn" },
+]
+keywords = ["jobs-scraper", "linkedin", "indeed", "ziprecruiter", "glassdoor", "bayt", "naukri", "bdjobs", "google-jobs"]
+dependencies = [
+    "curl-cffi>=0.7.4",
+    "beautifulsoup4>=4.12.2",
+    "pandas>=2.1.0",
+    "numpy>=1.26.0",
+    "pydantic>=2.3.0",
+    "markdownify>=1.1.0",
+    "regex>=2024.4.28",
+    "protobuf>=5.27.0",
+    "structlog>=24.1.0",
+    "stamina>=24.2.0",
+]
 
-[tool.black]
+[project.urls]
+Homepage = "https://github.com/cspenn/jobsniffer"
+"Upstream (not accepting PRs from this fork)" = "https://github.com/speedyapply/JobSpy"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "mypy>=1.10.0",
+    "ruff>=0.5.0",
+    "radon>=6.0.1",
+]
+# Note: blackboxprotobuf pins protobuf==3.10.0, which conflicts with this project's
+# protobuf>=5.27.0 runtime dependency. It is a one-time reverse-engineering aid for
+# discovering the ZipRecruiter Connect-RPC wire schema (Phase 3c), not a project
+# dependency — run it isolated: `uvx --from blackboxprotobuf python -c '...'`.
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jobsniffer"]
+
+[tool.ruff]
 line-length = 88
+target-version = "py312"
 
-[tool.poetry.dependencies]
-python = "^3.10"
-requests = "^2.31.0"
-beautifulsoup4 = "^4.12.2"
-pandas = "^2.1.0"
-numpy = ">=1.26.0"
-pydantic = "^2.3.0"
-tls-client = "^1.0.1"
-markdownify = "^1.1.0"
-regex = "^2024.4.28"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: hits real third-party sites; opt-in only, excluded from default runs",
+]
+addopts = "-m 'not live'"
 
-[tool.poetry.group.dev.dependencies]
-jupyter = "^1.0.0"
-black = "*"
-pre-commit = "*"
+[tool.coverage.run]
+source = ["src/jobsniffer"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+]

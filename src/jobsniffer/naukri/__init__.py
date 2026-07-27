@@ -9,14 +9,14 @@ from typing import Optional
 import regex as re
 import requests
 
-from jobspy.exception import NaukriException
-from jobspy.naukri.constant import headers as naukri_headers
-from jobspy.naukri.util import (
+from jobsniffer.exception import NaukriException
+from jobsniffer.naukri.constant import headers as naukri_headers
+from jobsniffer.naukri.util import (
     is_job_remote,
     parse_job_type,
     parse_company_industry,
 )
-from jobspy.model import (
+from jobsniffer.model import (
     JobPost,
     Location,
     JobResponse,
@@ -27,7 +27,7 @@ from jobspy.model import (
     ScraperInput,
     Site,
 )
-from jobspy.util import (
+from jobsniffer.util import (
     extract_emails_from_text,
     currency_parser,
     markdown_converter,
