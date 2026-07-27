@@ -49,10 +49,16 @@ def build_search_params(
     # jobsniffer.indeed.graphql.fetch_page: omitting the query param is a
     # valid request here (Indeed applies its own server-side default), so
     # there's no bug to work around the way there was in the GraphQL query's
-    # string interpolation. This does mean the two Indeed paths can apply a
-    # different effective radius for a request with no explicit distance --
-    # accepted, since a mid-scrape HTML->GraphQL fallback is already an
-    # unusual path (see jobsniffer.indeed.__init__.Indeed.scrape).
+    # string interpolation. ScraperInput.distance now defaults to
+    # DEFAULT_DISTANCE_MILES itself, so an *unset* distance already resolves
+    # to 50 before it gets here -- this None branch is now reached only by a
+    # caller *explicitly* passing distance=None to opt out of a radius
+    # entirely. In that narrow case, the two Indeed paths can still apply a
+    # different effective radius (HTML omits the param and gets Indeed's own
+    # server-side default; GraphQL substitutes DEFAULT_DISTANCE_MILES,
+    # since its query string has no "omit this field" form) -- accepted,
+    # since a mid-scrape HTML->GraphQL fallback is already an unusual path
+    # (see jobsniffer.indeed.__init__.Indeed.scrape).
     if hours_old is not None:
         # Indeed's HTML search accepts fromage in whole days.
         params["fromage"] = max(hours_old // 24, 1)
