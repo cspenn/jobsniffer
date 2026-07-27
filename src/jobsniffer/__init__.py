@@ -25,8 +25,22 @@ from jobsniffer.util import (
 )
 from jobsniffer.ziprecruiter import ZipRecruiter
 
+# Module-level so library consumers (e.g. an application built on top of
+# jobsniffer that needs to instantiate a specific site's Scraper directly,
+# rather than going through scrape_jobs()'s DataFrame-returning wrapper)
+# can do `from jobsniffer import SCRAPER_MAPPING` instead of duplicating
+# this table. Previously redefined inside scrape_jobs() on every call.
+SCRAPER_MAPPING = {
+    Site.LINKEDIN: LinkedIn,
+    Site.INDEED: Indeed,
+    Site.ZIP_RECRUITER: ZipRecruiter,
+    Site.GLASSDOOR: Glassdoor,
+    Site.GOOGLE: Google,
+    Site.BAYT: BaytScraper,
+    Site.NAUKRI: Naukri,
+    Site.BDJOBS: BDJobs,
+}
 
-# Update the SCRAPER_MAPPING dictionary in the scrape_jobs function
 
 def scrape_jobs(
     site_name: str | list[str] | Site | list[Site] | None = None,
@@ -55,16 +69,6 @@ def scrape_jobs(
     Scrapes job data from job boards concurrently
     :return: Pandas DataFrame containing job data
     """
-    SCRAPER_MAPPING = {
-        Site.LINKEDIN: LinkedIn,
-        Site.INDEED: Indeed,
-        Site.ZIP_RECRUITER: ZipRecruiter,
-        Site.GLASSDOOR: Glassdoor,
-        Site.GOOGLE: Google,
-        Site.BAYT: BaytScraper,
-        Site.NAUKRI: Naukri,
-        Site.BDJOBS: BDJobs,  # Add BDJobs to the scraper mapping
-    }
     set_logger_level(verbose)
     job_type = get_enum_from_value(job_type) if job_type else None
 
