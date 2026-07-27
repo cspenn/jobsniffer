@@ -37,17 +37,13 @@ def set_logger_level(verbose: int) -> None:
     """
     if verbose is None:
         return
+    # .get()'s default of "INFO" means level_name is always one of
+    # "INFO"/"WARNING"/"ERROR", so getattr(logging, level_name) always
+    # resolves -- no None-check/ValueError branch needed (that branch was
+    # dead code carried over from upstream JobSpy; removed rather than
+    # kept behind a pragma).
     level_name = {2: "INFO", 1: "WARNING", 0: "ERROR"}.get(verbose, "INFO")
-    level = getattr(logging, level_name.upper(), None)
-    if level is not None:
-        for logger_name in logging.root.manager.loggerDict:
-            if logger_name.startswith("JobSpy:"):
-                logging.getLogger(logger_name).setLevel(level)
-    else:
-        # level_name is always one of "INFO"/"WARNING"/"ERROR" (the dict's
-        # .get() default is "INFO" for any verbose not in {0, 1, 2}), so
-        # getattr(logging, level_name, None) always succeeds and this branch
-        # is unreachable. Carried over verbatim from upstream JobSpy -- not
-        # this commit's scope to redesign, kept honest via pragma rather
-        # than silently uncovered.
-        raise ValueError(f"Invalid log level: {level_name}")  # pragma: no cover
+    level = getattr(logging, level_name)
+    for logger_name in logging.root.manager.loggerDict:
+        if logger_name.startswith("JobSpy:"):
+            logging.getLogger(logger_name).setLevel(level)

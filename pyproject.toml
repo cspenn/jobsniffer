@@ -24,9 +24,16 @@ dependencies = [
     "markdownify>=1.1.0",
     "regex>=2024.4.28",
     "protobuf>=5.27.0",
-    "structlog>=24.1.0",
     "stamina>=24.2.0",
 ]
+# structlog is deliberately NOT a dependency yet. jobsniffer.http.curl_client
+# tried it and reverted: an unconfigured structlog.get_logger() is invisible
+# to jobsniffer.logging_config.set_logger_level()'s verbosity control (it
+# never attaches to the stdlib logger tree), so it silently ignored
+# verbose=0/1 while stdlib create_logger()-based modules correctly went
+# quiet. Proper adoption means configuring structlog to route through (or
+# replace) the stdlib tree everywhere at once -- that's Phase 4's "Add
+# structlog structured logging" scope, not a per-module swap.
 
 [project.urls]
 Homepage = "https://github.com/cspenn/jobsniffer"

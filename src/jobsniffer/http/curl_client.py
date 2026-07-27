@@ -12,6 +12,7 @@ exists (see docs/2026-07-27-jobsniffer-modernization-plan.md, Phase 1).
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
 from typing import Any, Self, cast
 
 import stamina
@@ -20,20 +21,23 @@ from curl_cffi.const import CurlOpt
 from curl_cffi.requests.exceptions import RequestException
 from curl_cffi.requests.session import HttpMethod
 
-from jobsniffer.http.exceptions import HttpClientError
+from jobsniffer.http.exceptions import HttpClientUnreachableError
 from jobsniffer.http.proxy import ProxyRotator
 from jobsniffer.logging_config import create_logger
 
 log = create_logger("HttpClient")
 
-# 429 is deliberately NOT auto-retried/raised here: every existing scraper
-# that cares about rate limiting (glassdoor, linkedin, ziprecruiter) already
-# branches on `response.status_code == 429` itself. Auto-raising here would
-# turn that inspectable response into an uncaught exception for callers that
-# don't wrap their request in a try/except -- a real regression, not a
-# deferred one. Only 5xx (unambiguously transient server failures) get the
-# transport-level retry-then-raise treatment.
-_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
+# Default retryable set: 429 is deliberately excluded. Every existing
+# scraper that cares about rate limiting (glassdoor, linkedin, ziprecruiter)
+# already branches on `response.status_code == 429` itself. Auto-raising
+# here would turn that inspectable response into an uncaught exception for
+# callers that don't wrap their request in a try/except -- a real
+# regression, not a deferred one. Only 5xx (unambiguously transient server
+# failures) gets the transport-level retry-then-raise treatment by default.
+# Configurable per-instance (not hardcoded) precisely because getting this
+# set wrong once already broke 429 handling -- a future site-specific
+# quirk shouldn't require another edit to this shared module.
+_DEFAULT_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
 
 
 class CurlCffiClient:
@@ -43,7 +47,8 @@ class CurlCffiClient:
     backoff via stamina; a request that exhausts retries raises the
     underlying curl_cffi exception rather than returning a fabricated
     response (P8 -- explicit failure propagation). 429 is returned to the
-    caller as a normal response -- see _RETRYABLE_STATUS comment.
+    caller as a normal response by default -- see the retryable_status
+    parameter and _DEFAULT_RETRYABLE_STATUS comment.
     """
 
     def __init__(
@@ -57,6 +62,7 @@ class CurlCffiClient:
         max_attempts: int = 3,
         retry_timeout: float = 60.0,
         wait_initial: float = 0.5,
+        retryable_status: frozenset[int] = _DEFAULT_RETRYABLE_STATUS,
         session: curl_requests.Session | None = None,
     ) -> None:
         """`session` is an injection seam for tests: passing a fake session
@@ -68,6 +74,7 @@ class CurlCffiClient:
         self._max_attempts = max_attempts
         self._retry_timeout = retry_timeout
         self._wait_initial = wait_initial
+        self._retryable_status = retryable_status
 
         if session is not None:
             self._session = session
@@ -81,13 +88,17 @@ class CurlCffiClient:
             self._session = curl_requests.Session(**session_kwargs)
 
     @property
-    def headers(self) -> Any:
+    def headers(self) -> MutableMapping[str, str]:
         """Persistent session-level headers, matching requests.Session's
         convention. Several scrapers (glassdoor, linkedin, naukri, bdjobs,
         ziprecruiter) call `self.session.headers.update(...)` once after
         construction -- this passthrough is required for those call sites
-        to keep working unchanged."""
-        return self._session.headers
+        to keep working unchanged. curl_cffi's Headers is a MutableMapping
+        subclass at runtime, matching HttpClient.headers in protocol.py --
+        the cast below is only needed because curl_cffi's own type stub
+        for Headers.__getitem__ returns `str | None`, stricter than the
+        MutableMapping[str, str] contract requires."""
+        return cast(MutableMapping[str, str], self._session.headers)
 
     def request(self, method: str, url: str, **kwargs: Any) -> curl_requests.Response:
         kwargs.setdefault("timeout", self._timeout)
@@ -111,7 +122,7 @@ class CurlCffiClient:
                 response = self._session.request(
                     cast(HttpMethod, method), url, **kwargs
                 )
-                if response.status_code in _RETRYABLE_STATUS:
+                if response.status_code in self._retryable_status:
                     log.warning(
                         f"http.retryable_status method={method} url={url} "
                         f"status_code={response.status_code}"
@@ -138,17 +149,3 @@ class CurlCffiClient:
 
     def __exit__(self, *exc_info: object) -> None:
         self.close()
-
-
-class HttpClientUnreachableError(HttpClientError, RuntimeError):
-    """Raised only if stamina's retry loop exits without returning or
-    raising -- a stamina contract violation, not an expected runtime state.
-
-    Inherits HttpClientError (this module's own exception taxonomy) as well
-    as RuntimeError (its natural stdlib category), so code that catches
-    HttpClientError broadly still catches this."""
-
-    def __init__(self, method: str, url: str) -> None:
-        super().__init__(
-            f"stamina.retry_context exited without a result for {method} {url}"
-        )

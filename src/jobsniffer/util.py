@@ -35,12 +35,18 @@ def create_session(
     client that doesn't persist a cookie jar across calls the way
     requests.Session does.
 
-    `has_retry`/`delay` ARE forwarded, not discarded: CurlCffiClient always
-    retries transient failures, but callers that previously asked for
-    has_retry=True with a slower `delay` (e.g. linkedin/naukri/bdjobs pass
-    delay=5, vs. bayt/glassdoor's default delay=1) get a larger retry
-    budget and a longer initial backoff, matching their original intent
-    instead of silently collapsing every scraper onto one retry policy.
+    `has_retry`/`delay` ARE forwarded, not discarded, though the mapping is
+    a reinterpretation rather than an exact translation: CurlCffiClient
+    always retries transient failures now (unlike the old tls_client path,
+    which had none), so there's no literal "retry on/off" to preserve.
+    Instead, callers that previously asked for has_retry=True with a
+    slower `delay` (e.g. linkedin/naukri/bdjobs pass delay=5, vs.
+    bayt/glassdoor's default delay=1) get a larger retry budget
+    (max_attempts=5 -- a deliberately generous round number, not a precise
+    translation of the old urllib3 Retry(total=3) math) and a longer
+    initial backoff (wait_initial=delay), which honors the same *relative*
+    intent (this scraper wants more patience than the default) rather than
+    silently collapsing every scraper onto one identical retry policy.
     :return: An HttpClient
     """
     del is_tls, clear_cookies  # true no-ops, see above

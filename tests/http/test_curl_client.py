@@ -3,8 +3,8 @@ from curl_cffi.const import CurlOpt
 from curl_cffi.requests.exceptions import ConnectionError as CurlConnectionError
 from curl_cffi.requests.exceptions import HTTPError
 
-from jobsniffer.http.curl_client import CurlCffiClient, HttpClientUnreachableError
-from jobsniffer.http.exceptions import HttpClientError
+from jobsniffer.http.curl_client import CurlCffiClient
+from jobsniffer.http.exceptions import HttpClientError, HttpClientUnreachableError
 
 
 class FakeResponse:
@@ -77,6 +77,19 @@ def test_429_is_returned_immediately_not_retried_or_raised():
     response = client.get("https://example.com")
     assert response.status_code == 429
     assert len(fake.calls) == 1
+
+
+def test_retryable_status_is_configurable_per_instance():
+    """A future site-specific quirk (e.g. one site where 429 really should
+    be retried) should be a constructor argument, not an edit to this
+    shared module -- verify the set is actually per-instance, not a
+    module-level constant baked into the retry check."""
+    client, fake = _client_with_fake_session(
+        [429, 200], retryable_status=frozenset({429})
+    )
+    response = client.get("https://example.com")
+    assert response.status_code == 200
+    assert len(fake.calls) == 2
 
 
 def test_retries_on_5xx_then_succeeds():

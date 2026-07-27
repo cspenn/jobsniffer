@@ -9,11 +9,12 @@ ReplayClient without touching scraper code.
 
 from __future__ import annotations
 
-from jobsniffer.http.curl_client import CurlCffiClient, HttpClientUnreachableError
+from jobsniffer.http.curl_client import CurlCffiClient
 from jobsniffer.http.exceptions import (
     FixtureFileError,
     FixtureNotFoundError,
     HttpClientError,
+    HttpClientUnreachableError,
 )
 from jobsniffer.http.fixtures import RecordedExchange, compute_body_signature
 from jobsniffer.http.protocol import HttpClient, HttpResponse

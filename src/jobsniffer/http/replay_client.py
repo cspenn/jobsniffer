@@ -77,12 +77,22 @@ class ReplayClient:
         self._exchanges: list[RecordedExchange] = (
             load_fixtures(fixture_path) if mode == "replay" else []
         )
-        # Session-level headers, matching HttpClient.headers. Not consulted
-        # by fixture matching (matching keys on method/url/body signature
-        # only) -- this exists so `self.session.headers.update(...)` call
-        # sites (glassdoor, linkedin, naukri, bdjobs, ziprecruiter) don't
-        # raise AttributeError when a scraper is exercised against a
-        # ReplayClient in tests.
+        # Session-level headers, matching HttpClient.headers -- this exists
+        # so `self.session.headers.update(...)` call sites (glassdoor,
+        # linkedin, naukri, bdjobs, ziprecruiter) don't raise AttributeError
+        # when a scraper is exercised against a ReplayClient in tests.
+        #
+        # KNOWN, INTENTIONAL LIMITATION: this is write-only. Fixture
+        # matching keys on method/url/body signature only, never on
+        # headers, so a scraper that sets a wrong or missing header will
+        # replay identically to one that sets it correctly. No scraper
+        # currently reads a header value back out of `.headers` (only
+        # Indeed's separate, unrelated `.headers` dict does per-request
+        # lookups), so this hasn't mattered yet -- but a header-driven
+        # auth/locale bug is a class of regression this Protocol cannot
+        # catch in replay mode. If that ever needs testing, headers would
+        # need to join the match key (or be recorded on RecordedExchange
+        # for assertion), not silently discarded as they are today.
         self.headers: dict[str, str] = {}
 
         if mode == "record" and recorder is None:
