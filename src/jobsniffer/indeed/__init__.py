@@ -43,13 +43,15 @@ class Indeed(Scraper):
         Primary path is the mosaic HTML search + /viewjob detail flow
         (jobsniffer.indeed.search/detail/parse); the GraphQL API
         (jobsniffer.indeed.graphql) is a fallback used only when the HTML
-        search returns no results at all, e.g. Indeed serving a
-        block/CAPTCHA page -- see docs/2026-07-27-jobsniffer-modernization-
-        plan.md, Phase 3a, for why HTML is primary (the search response
-        alone was found to carry only truncated snippets and estimated
-        salaries; the detail fetch is what supplies the full description
-        and authoritative salary the graphql path already returned
-        directly).
+        search page is blocked or unparseable -- see
+        docs/2026-07-27-jobsniffer-modernization-plan.md, Phase 3a, for
+        why HTML is primary (the search response alone was found to carry
+        only truncated snippets and estimated salaries; the detail fetch
+        is what supplies the full description and authoritative salary
+        the graphql path already returned directly). A legitimately empty
+        search result (narrow term, real zero matches) is NOT treated as
+        "blocked" -- see jobsniffer.indeed.search.SearchPageResult for why
+        that distinction matters.
 
         scraper_input/base_url are threaded through the scrape/helper
         methods as explicit parameters rather than stored on self: the
@@ -67,25 +69,42 @@ class Indeed(Scraper):
         domain, api_country_code = scraper_input.country.indeed_domain_value
         base_url = f"https://{domain}.indeed.com"
 
-        job_list = self._scrape_html(scraper_input, base_url)
-        if not job_list:
-            log.info("HTML search returned no results, falling back to GraphQL")
+        raw_jobs, blocked = self._collect_html_search_results(scraper_input, base_url)
+        if blocked:
+            log.info("HTML search page blocked or unparseable, falling back to GraphQL")
             job_list = self._scrape_graphql(scraper_input, base_url, api_country_code)
+            return JobResponse(
+                jobs=job_list[
+                    scraper_input.offset : scraper_input.offset + scraper_input.results_wanted
+                ]
+            )
 
-        return JobResponse(
-            jobs=job_list[
-                scraper_input.offset : scraper_input.offset + scraper_input.results_wanted
-            ]
-        )
+        # Build full JobPosts (each triggering a real /viewjob detail
+        # fetch) only for the slice actually being returned -- raw_jobs is
+        # bounded to results_wanted+offset, but everything before `offset`
+        # would otherwise be discarded after paying for a detail fetch it
+        # never needed.
+        sliced = raw_jobs[
+            scraper_input.offset : scraper_input.offset + scraper_input.results_wanted
+        ]
+        job_list = [self._build_job_post(job, scraper_input, base_url) for job in sliced]
+        return JobResponse(jobs=job_list)
 
-    def _scrape_html(self, scraper_input: ScraperInput, base_url: str) -> list[JobPost]:
-        job_list: list[JobPost] = []
+    def _collect_html_search_results(
+        self, scraper_input: ScraperInput, base_url: str
+    ) -> tuple[list[dict], bool]:
+        """Paginates the HTML search until `target` distinct jobs are
+        collected or the site stops returning new ones. Returns the raw
+        job dicts (NOT yet detail-fetched -- see scrape()) plus whether
+        the first page came back blocked."""
+        raw_jobs: list[dict] = []
         seen_keys: set[str] = set()
         start = 0
         target = scraper_input.results_wanted + scraper_input.offset
+        first_page = True
 
         while len(seen_keys) < target:
-            results = fetch_search_page(
+            page = fetch_search_page(
                 self.session,
                 base_url=base_url,
                 search_term=scraper_input.search_term,
@@ -95,19 +114,20 @@ class Indeed(Scraper):
                 start=start,
                 timeout=scraper_input.request_timeout,
             )
-            if not results:
+            if first_page and page.blocked:
+                return [], True
+            first_page = False
+            if not page.results:
                 break
 
             new_this_page = 0
-            for job in results:
+            for job in page.results:
                 job_key = job.get("jobkey")
                 if not job_key or job_key in seen_keys:
                     continue
                 seen_keys.add(job_key)
                 new_this_page += 1
-                post = self._build_job_post(job, scraper_input, base_url)
-                if post:
-                    job_list.append(post)
+                raw_jobs.append(job)
                 if len(seen_keys) >= target:
                     break
 
@@ -116,13 +136,13 @@ class Indeed(Scraper):
                 # isn't advancing (end of results), stop rather than loop
                 # on the same page forever.
                 break
-            start += len(results)
+            start += len(page.results)
 
-        return job_list
+        return raw_jobs, False
 
     def _build_job_post(
         self, job: dict, scraper_input: ScraperInput, base_url: str
-    ) -> JobPost | None:
+    ) -> JobPost:
         job_key = job["jobkey"]
         detail_body = fetch_job_detail(
             self.session,
@@ -139,9 +159,21 @@ class Indeed(Scraper):
                 detail_body.get("salaryInfoModel")
             )
         if description is None:
-            # Detail fetch failed or the page shape changed -- fall back
-            # to the truncated search-result snippet rather than an empty
-            # description (P8: degrade, don't silently drop the field).
+            # Detail fetch failed, returned an unexpected shape, or the
+            # description field itself was empty -- degrade to the
+            # truncated search-result snippet rather than an empty
+            # description (P8: propagate the *absence* explicitly by
+            # logging it, rather than silently discarding which case
+            # happened). This is a known, accepted limitation for now:
+            # JobPost has no field yet to mark a record as
+            # snippet-only rather than full-detail -- see
+            # docs/2026-07-27-jobsniffer-modernization-plan.md's Phase 5
+            # idempotence design, which will need that distinction once
+            # content_hash-based skip-if-unchanged logic lands, at which
+            # point LinkedIn/ZipRecruiter will have hit the same gap and
+            # the field can be designed from three real cases instead of
+            # one guess.
+            log.debug(f"Indeed: no detail description for {job_key}, using search snippet")
             description = job.get("snippet")
         if compensation is None:
             compensation = compensation_from_extracted_salary(job)
@@ -198,13 +230,13 @@ class Indeed(Scraper):
                 if job["key"] in seen_keys:
                     continue
                 seen_keys.add(job["key"])
-                post = indeed_graphql.job_post_from_graphql_result(
-                    job,
-                    base_url=base_url,
-                    description_format=scraper_input.description_format,
+                job_list.append(
+                    indeed_graphql.job_post_from_graphql_result(
+                        job,
+                        base_url=base_url,
+                        description_format=scraper_input.description_format,
+                    )
                 )
-                if post:
-                    job_list.append(post)
                 if len(seen_keys) >= target:
                     break
 

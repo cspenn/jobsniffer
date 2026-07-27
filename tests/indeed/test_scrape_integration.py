@@ -9,24 +9,18 @@ see tests/indeed/test_search.py and test_detail.py for why ReplayClient's
 exact-URL matching isn't the right tool for this test.
 """
 
+import json
 from pathlib import Path
 
+import pytest
+
+from jobsniffer.exception import IndeedException
 from jobsniffer.http.fixtures import load_fixtures
 from jobsniffer.indeed import Indeed
 from jobsniffer.model import Country, DescriptionFormat, ScraperInput, Site
+from tests.indeed._fakes import FakeResponse
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "indeed.jsonl"
-
-
-class FakeResponse:
-    def __init__(self, *, ok=True, text=""):
-        self.ok = ok
-        self.text = text
-
-    def json(self):
-        import json
-
-        return json.loads(self.text)
 
 
 class FakeIndeedSession:
@@ -109,19 +103,35 @@ def test_scrape_respects_results_wanted_and_offset():
     assert len(response.jobs) == 3
 
 
-def test_scrape_falls_back_to_graphql_when_html_search_returns_nothing():
-    class EmptySearchSession:
+def test_scrape_with_offset_does_not_detail_fetch_the_skipped_prefix():
+    """N jobs before `offset` are collected during search (needed to know
+    their jobkeys/ordering) but must NOT trigger a /viewjob detail fetch --
+    that would be pure waste for records the caller is discarding anyway."""
+    exchanges = load_fixtures(FIXTURES)
+    indeed = Indeed()
+    session = FakeIndeedSession(exchanges)
+    indeed.session = session
+
+    response = indeed.scrape(_scraper_input(results_wanted=2, offset=3))
+
+    assert len(response.jobs) == 2
+    detail_fetch_count = sum(1 for url, _ in session.calls if url.endswith("/viewjob"))
+    assert detail_fetch_count == 2
+
+
+def test_scrape_falls_back_to_graphql_when_html_search_is_blocked():
+    class BlockedSearchSession:
         def __init__(self):
             self.graphql_called = False
 
         def get(self, url, **kwargs):
-            return FakeResponse(ok=True, text="<html>blocked, no mosaic data</html>")
+            return FakeResponse(ok=True, text="<html>Please verify you're human</html>")
 
         def post(self, url, **kwargs):
             self.graphql_called = True
             return FakeResponse(ok=True, text='{"data": {"jobSearch": {"pageInfo": {"nextCursor": null}, "results": []}}}')
 
-    session = EmptySearchSession()
+    session = BlockedSearchSession()
     indeed = Indeed()
     indeed.session = session
 
@@ -131,11 +141,41 @@ def test_scrape_falls_back_to_graphql_when_html_search_returns_nothing():
     assert response.jobs == []
 
 
+def test_scrape_does_not_fall_back_to_graphql_on_a_legitimately_empty_search():
+    """A search page that renders normally (mosaic-provider-jobcards
+    present) but has zero results -- a real, narrow search term matching
+    nothing -- must NOT trigger the GraphQL fallback. Falling back here
+    would waste a request against a fragile shared-credential path for a
+    perfectly ordinary "no matches" outcome."""
+
+    class LegitimatelyEmptySession:
+        def __init__(self):
+            self.graphql_called = False
+
+        def get(self, url, **kwargs):
+            return FakeResponse(
+                ok=True,
+                text=(
+                    'window.mosaic.providerData["mosaic-provider-jobcards"]='
+                    '{"metaData": {"mosaicProviderJobCardsModel": {"results": []}}};'
+                ),
+            )
+
+        def post(self, url, **kwargs):
+            self.graphql_called = True
+            raise AssertionError("should not fall back to graphql for a legitimate empty result")
+
+    session = LegitimatelyEmptySession()
+    indeed = Indeed()
+    indeed.session = session
+
+    response = indeed.scrape(_scraper_input(results_wanted=5))
+
+    assert session.graphql_called is False
+    assert response.jobs == []
+
+
 def test_scrape_raises_when_country_is_none():
-    import pytest
-
-    from jobsniffer.exception import IndeedException
-
     indeed = Indeed()
     with pytest.raises(IndeedException, match="country"):
         indeed.scrape(_scraper_input(country=None))
@@ -159,14 +199,15 @@ class _RepeatingSearchSession:
         return FakeResponse(ok=False, text="")
 
 
-def test_scrape_html_stops_when_a_page_returns_only_already_seen_jobs():
+def test_collect_html_search_results_stops_when_a_page_returns_only_already_seen_jobs():
     indeed = Indeed()
     indeed.session = _RepeatingSearchSession()
-    job_list = indeed._scrape_html(
+    raw_jobs, blocked = indeed._collect_html_search_results(
         _scraper_input(results_wanted=10), "https://www.indeed.com"
     )
-    assert len(job_list) == 1
-    assert job_list[0].id == "in-dup1"
+    assert blocked is False
+    assert len(raw_jobs) == 1
+    assert raw_jobs[0]["jobkey"] == "dup1"
 
 
 def test_build_job_post_converts_markdown_on_html_path():
@@ -241,7 +282,7 @@ def test_scrape_graphql_paginates_and_dedupes_across_pages():
         def post(self, url, **kwargs):
             page = pages[self.call_count]
             self.call_count += 1
-            return FakeResponse(ok=True, text=__import__("json").dumps(page))
+            return FakeResponse(ok=True, text=json.dumps(page))
 
     indeed.session = PaginatedGraphqlSession()
     job_list = indeed._scrape_graphql(
@@ -266,7 +307,7 @@ def test_scrape_graphql_stops_mid_page_once_target_reached():
 
     class SingleResponseSession:
         def post(self, url, **kwargs):
-            return FakeResponse(ok=True, text=__import__("json").dumps(body))
+            return FakeResponse(ok=True, text=json.dumps(body))
 
     indeed.session = SingleResponseSession()
     job_list = indeed._scrape_graphql(

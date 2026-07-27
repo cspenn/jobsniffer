@@ -23,7 +23,7 @@ from jobsniffer.http.protocol import HttpClient
 from jobsniffer.indeed.constant import api_headers, job_search_query
 from jobsniffer.indeed.util import get_compensation, get_job_type
 from jobsniffer.indeed.util import is_job_remote as is_job_remote_graphql
-from jobsniffer.model import JobPost, JobType, Location
+from jobsniffer.model import DescriptionFormat, JobPost, JobType, Location
 from jobsniffer.util import extract_emails_from_text, markdown_converter
 
 
@@ -131,13 +131,13 @@ def fetch_page(
 
 
 def job_post_from_graphql_result(
-    job: dict, *, base_url: str, description_format
-) -> JobPost | None:
+    job: dict, *, base_url: str, description_format: DescriptionFormat | None
+) -> JobPost:
     """Adapted from the pre-rewrite Indeed._process_job -- same field
     mapping, just parameterized instead of reading self.*."""
     job_url = f'{base_url}/viewjob?jk={job["key"]}'
     description = job["description"]["html"]
-    if description_format is not None and description_format.value == "markdown":
+    if description_format == DescriptionFormat.MARKDOWN:
         description = markdown_converter(description)
 
     job_type = get_job_type(job["attributes"])

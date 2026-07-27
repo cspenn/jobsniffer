@@ -1,3 +1,4 @@
+import json
 
 from jobsniffer.indeed.graphql import (
     build_filters,
@@ -5,6 +6,7 @@ from jobsniffer.indeed.graphql import (
     job_post_from_graphql_result,
 )
 from jobsniffer.model import DescriptionFormat, JobType
+from tests.indeed._fakes import FakeResponse
 
 
 def test_build_filters_hours_old_takes_priority():
@@ -28,15 +30,6 @@ def test_build_filters_empty_when_nothing_specified():
     assert build_filters(hours_old=None, easy_apply=None, job_type=None, is_remote=False) == ""
 
 
-class FakeResponse:
-    def __init__(self, *, ok=True, body=None):
-        self.ok = ok
-        self._body = body or {}
-
-    def json(self):
-        return self._body
-
-
 class FakeSession:
     def __init__(self, response):
         self._response = response
@@ -48,7 +41,7 @@ class FakeSession:
 
 
 def test_fetch_page_returns_empty_on_non_ok_response():
-    session = FakeSession(FakeResponse(ok=False))
+    session = FakeSession(FakeResponse(ok=False, text=""))
     results, cursor = fetch_page(
         session,
         api_url="https://apis.indeed.com/graphql",
@@ -67,7 +60,7 @@ def test_fetch_page_returns_empty_on_non_ok_response():
 
 
 def test_fetch_page_returns_empty_when_job_search_missing():
-    session = FakeSession(FakeResponse(ok=True, body={"data": {}}))
+    session = FakeSession(FakeResponse(ok=True, text=json.dumps({"data": {}})))
     results, cursor = fetch_page(
         session,
         api_url="https://apis.indeed.com/graphql",
@@ -94,7 +87,7 @@ def test_fetch_page_extracts_results_and_next_cursor():
             }
         }
     }
-    session = FakeSession(FakeResponse(ok=True, body=body))
+    session = FakeSession(FakeResponse(ok=True, text=json.dumps(body)))
     results, cursor = fetch_page(
         session,
         api_url="https://apis.indeed.com/graphql",

@@ -1,24 +1,15 @@
 from pathlib import Path
 
 from jobsniffer.http.fixtures import load_fixtures
+from jobsniffer.http.replay_client import RecordedResponse
 from jobsniffer.indeed.detail import fetch_job_detail
+from tests.indeed._fakes import FakeResponse
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "indeed.jsonl"
 
 
-class FakeResponse:
-    def __init__(self, *, ok=True, text=""):
-        self.ok = ok
-        self.text = text
-
-    def json(self):
-        import json
-
-        return json.loads(self.text)
-
-
 class FakeSession:
-    def __init__(self, response: FakeResponse):
+    def __init__(self, response):
         self._response = response
         self.calls = []
 
@@ -53,12 +44,12 @@ def test_fetch_job_detail_returns_none_when_body_is_not_a_dict():
 def test_fetch_job_detail_returns_the_real_recorded_known_job_body():
     """Verifies against the same known ground truth as test_parse.py:
     jk=20d6afbf6595234e -> title "Website Developer & Digital Marketing",
-    salaryMin/Max 60000/65000."""
+    salaryMin/Max 60000/65000. Uses RecordedResponse directly (rather than
+    a hand re-wrapped FakeResponse) -- it already wraps a RecordedExchange
+    into exactly the .ok/.text/.json() shape fetch_job_detail expects."""
     exchanges = load_fixtures(FIXTURES)
     detail_exchange = next(e for e in exchanges if "jk=20d6afbf6595234e" in e.url)
-    session = FakeSession(
-        FakeResponse(ok=True, text=detail_exchange.content.decode("utf-8"))
-    )
+    session = FakeSession(RecordedResponse(detail_exchange))
 
     body = fetch_job_detail(
         session, base_url="https://www.indeed.com", job_key="20d6afbf6595234e"

@@ -2,14 +2,9 @@ from pathlib import Path
 
 from jobsniffer.http.fixtures import load_fixtures
 from jobsniffer.indeed.search import build_search_params, fetch_search_page
+from tests.indeed._fakes import FakeResponse
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "indeed.jsonl"
-
-
-class FakeResponse:
-    def __init__(self, *, ok=True, text=""):
-        self.ok = ok
-        self.text = text
 
 
 class FakeSession:
@@ -64,7 +59,7 @@ def test_build_search_params_omits_none_values():
 
 
 def test_fetch_search_page_sends_expected_url_and_params():
-    session = FakeSession(FakeResponse(ok=True, text="<html></html>"))
+    session = FakeSession(FakeResponse(ok=True, text='window.mosaic.providerData["mosaic-provider-jobcards"]={"metaData": {}};'))
     fetch_search_page(
         session,
         base_url="https://www.indeed.com",
@@ -79,9 +74,9 @@ def test_fetch_search_page_sends_expected_url_and_params():
     assert kwargs["params"] == {"q": "marketing", "l": "Boston, MA", "start": 10}
 
 
-def test_fetch_search_page_returns_empty_list_on_non_ok_response():
+def test_fetch_search_page_blocked_on_non_ok_response():
     session = FakeSession(FakeResponse(ok=False, text=""))
-    results = fetch_search_page(
+    page = fetch_search_page(
         session,
         base_url="https://www.indeed.com",
         search_term="x",
@@ -89,7 +84,48 @@ def test_fetch_search_page_returns_empty_list_on_non_ok_response():
         distance=None,
         hours_old=None,
     )
-    assert results == []
+    assert page.results == []
+    assert page.blocked is True
+
+
+def test_fetch_search_page_blocked_when_provider_marker_missing():
+    """Distinguishes a block/CAPTCHA/markup-change page (no
+    mosaic-provider-jobcards marker at all) from a page that rendered
+    normally with zero results -- the two must not be conflated, since
+    only the former should trigger Indeed.scrape()'s GraphQL fallback."""
+    session = FakeSession(FakeResponse(ok=True, text="<html>Please verify you're human</html>"))
+    page = fetch_search_page(
+        session,
+        base_url="https://www.indeed.com",
+        search_term="x",
+        location=None,
+        distance=None,
+        hours_old=None,
+    )
+    assert page.results == []
+    assert page.blocked is True
+
+
+def test_fetch_search_page_not_blocked_when_provider_present_but_empty():
+    session = FakeSession(
+        FakeResponse(
+            ok=True,
+            text=(
+                'window.mosaic.providerData["mosaic-provider-jobcards"]='
+                '{"metaData": {"mosaicProviderJobCardsModel": {"results": []}}};'
+            ),
+        )
+    )
+    page = fetch_search_page(
+        session,
+        base_url="https://www.indeed.com",
+        search_term="an extremely narrow search term",
+        location=None,
+        distance=None,
+        hours_old=None,
+    )
+    assert page.results == []
+    assert page.blocked is False
 
 
 def test_fetch_search_page_parses_the_real_recorded_search_page():
@@ -100,7 +136,7 @@ def test_fetch_search_page_parses_the_real_recorded_search_page():
     search_html = exchanges[0].content.decode("utf-8")
     session = FakeSession(FakeResponse(ok=True, text=search_html))
 
-    results = fetch_search_page(
+    page = fetch_search_page(
         session,
         base_url="https://www.indeed.com",
         search_term="marketing",
@@ -109,5 +145,6 @@ def test_fetch_search_page_parses_the_real_recorded_search_page():
         hours_old=None,
     )
 
-    assert len(results) == 40
-    assert "20d6afbf6595234e" in {job["jobkey"] for job in results}
+    assert page.blocked is False
+    assert len(page.results) == 40
+    assert "20d6afbf6595234e" in {job["jobkey"] for job in page.results}

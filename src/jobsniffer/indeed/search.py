@@ -9,8 +9,29 @@ salary) and jobsniffer.indeed.detail for step 2.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from jobsniffer.http.protocol import HttpClient
-from jobsniffer.indeed.parse import parse_search_results
+from jobsniffer.indeed.parse import extract_provider_data, results_from_provider_data
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPageResult:
+    """`blocked` distinguishes two causes that both look like "no jobs
+    from this page" but call for different responses from the caller:
+
+    - blocked=True: a non-2xx response, OR the page rendered without the
+      mosaic-provider-jobcards marker at all (block page, CAPTCHA, or a
+      markup change) -- Indeed.scrape() should fall back to GraphQL.
+    - blocked=False, results=[]: the page rendered normally and the
+      provider was present, it just has no results -- a genuinely narrow
+      search term returning nothing. Falling back to GraphQL here would
+      burn a request against a fragile shared-credential path for no
+      reason (see jobsniffer.indeed.graphql's module docstring).
+    """
+
+    results: list[dict]
+    blocked: bool
 
 
 def build_search_params(
@@ -40,13 +61,13 @@ def fetch_search_page(
     hours_old: int | None,
     start: int = 0,
     timeout: float = 15.0,
-) -> list[dict]:
-    """Fetches one page of Indeed search results and returns the raw
-    per-job dicts (see jobsniffer.indeed.parse.parse_search_results).
+) -> SearchPageResult:
+    """Fetches one page of Indeed search results.
 
-    Returns [] on a non-2xx/3xx response rather than raising -- a single
-    blocked/CAPTCHA'd page shouldn't crash the whole scrape; the caller
-    decides whether to fall back to the GraphQL path.
+    Never raises on a non-2xx/3xx response or an unparseable page -- a
+    single blocked/CAPTCHA'd page shouldn't crash the whole scrape; the
+    caller decides whether to fall back to the GraphQL path based on
+    SearchPageResult.blocked.
     """
     params = build_search_params(
         search_term=search_term,
@@ -57,5 +78,10 @@ def fetch_search_page(
     )
     response = session.get(f"{base_url}/jobs", params=params, timeout=timeout)
     if not response.ok:
-        return []
-    return parse_search_results(response.text)
+        return SearchPageResult(results=[], blocked=True)
+    provider_data = extract_provider_data(response.text, "mosaic-provider-jobcards")
+    if provider_data is None:
+        return SearchPageResult(results=[], blocked=True)
+    return SearchPageResult(
+        results=results_from_provider_data(provider_data), blocked=False
+    )

@@ -57,7 +57,10 @@ def test_extract_provider_data_returns_none_for_empty_html():
 
 def test_extract_provider_data_raises_on_unbalanced_json():
     broken_html = 'window.mosaic.providerData["mosaic-provider-jobcards"]={"a": 1'
-    with pytest.raises(ValueError, match="Unbalanced JSON object"):
+    # json.JSONDecoder().raw_decode surfaces its own JSONDecodeError (a
+    # ValueError subclass) for malformed JSON -- no custom exception
+    # needed, and no custom message to keep in sync with stdlib's wording.
+    with pytest.raises(json.JSONDecodeError):
         extract_provider_data(broken_html, "mosaic-provider-jobcards")
 
 

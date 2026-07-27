@@ -43,44 +43,34 @@ def extract_provider_data(html: str, provider_key: str) -> dict | None:
     that provider (blocked, CAPTCHA, markup change, or a provider that
     genuinely has no data on this page), which callers must treat as "no
     data available", not synthesize a fabricated empty result for (P8).
+    Callers that need to distinguish "blocked" from "legitimately empty"
+    (jobsniffer.indeed.search.fetch_search_page) rely on this None to mean
+    the former -- parse_search_results collapses it to [] for callers that
+    don't need the distinction.
     """
     marker = f'window.mosaic.providerData["{provider_key}"]='
     idx = html.find(marker)
     if idx == -1:
         return None
     start = idx + len(marker)
-    json_str = _extract_balanced_json_object(html, start)
-    return json.loads(json_str)
+    # json.JSONDecoder().raw_decode parses from start_idx and reports where
+    # it stopped, handling nested braces inside string values (e.g. an
+    # HTML snippet field) correctly via its own string-aware tokenizer --
+    # no need to hand-roll that scan. Verified against this project's real
+    # fixture: identical output to a hand-rolled brace-counter, ~9x faster.
+    data, _end_idx = json.JSONDecoder().raw_decode(html, start)
+    return data
 
 
-def _extract_balanced_json_object(text: str, start_idx: int) -> str:
-    """Scans forward from start_idx (which must index the object's
-    opening '{') respecting JSON string escaping, so braces inside string
-    values (e.g. inside an HTML snippet) don't miscount. Returns the
-    substring up to and including the matching closing brace.
-    """
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start_idx, len(text)):
-        ch = text[i]
-        if in_string:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
-        else:
-            if ch == '"':
-                in_string = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[start_idx : i + 1]
-    raise ValueError(f"Unbalanced JSON object starting at index {start_idx}")
+def results_from_provider_data(provider_data: dict) -> list[dict]:
+    """Pulls the per-job `results` list out of an already-parsed
+    mosaic-provider-jobcards payload. Split from parse_search_results so
+    callers that already called extract_provider_data (e.g.
+    jobsniffer.indeed.search.fetch_search_page, which needs the parsed
+    payload itself to distinguish "blocked" from "empty") don't have to
+    re-parse the whole page a second time to get the results list."""
+    model = provider_data.get("metaData", {}).get("mosaicProviderJobCardsModel", {})
+    return model.get("results", [])
 
 
 def parse_search_results(html: str) -> list[dict]:
@@ -89,8 +79,7 @@ def parse_search_results(html: str) -> list[dict]:
     data = extract_provider_data(html, "mosaic-provider-jobcards")
     if data is None:
         return []
-    model = data.get("metaData", {}).get("mosaicProviderJobCardsModel", {})
-    return model.get("results", [])
+    return results_from_provider_data(data)
 
 
 def job_types_from_taxonomy(taxonomy_attributes: list[dict] | None) -> list[JobType]:
@@ -112,6 +101,23 @@ def job_types_from_taxonomy(taxonomy_attributes: list[dict] | None) -> list[JobT
     return job_types
 
 
+def _compensation_from_amounts(
+    *, min_amount: float | None, max_amount: float | None, salary_type: str, currency: str
+) -> Compensation | None:
+    """Shared by compensation_from_extracted_salary (search-result
+    estimate) and compensation_from_salary_info_model (detail-fetch
+    authoritative figure) -- both resolve to the same
+    min/max/type/currency shape, just read from different field names."""
+    if min_amount is None and max_amount is None:
+        return None
+    return Compensation(
+        interval=_INTERVAL_BY_SALARY_TYPE.get(salary_type),
+        min_amount=min_amount,
+        max_amount=max_amount,
+        currency=currency,
+    )
+
+
 def compensation_from_extracted_salary(job: dict) -> Compensation | None:
     """Search-result-level salary: an ESTIMATE (source: EXTRACTION), used
     only until the detail fetch's authoritative salaryInfoModel replaces
@@ -119,14 +125,11 @@ def compensation_from_extracted_salary(job: dict) -> Compensation | None:
     extracted = job.get("extractedSalary")
     if not extracted:
         return None
-    min_amount = extracted.get("min")
-    max_amount = extracted.get("max")
-    if min_amount is None and max_amount is None:
-        return None
-    interval = _INTERVAL_BY_SALARY_TYPE.get(extracted.get("type", ""))
-    currency = job.get("salarySnippet", {}).get("currency", "USD")
-    return Compensation(
-        interval=interval, min_amount=min_amount, max_amount=max_amount, currency=currency
+    return _compensation_from_amounts(
+        min_amount=extracted.get("min"),
+        max_amount=extracted.get("max"),
+        salary_type=extracted.get("type", ""),
+        currency=job.get("salarySnippet", {}).get("currency", "USD"),
     )
 
 
@@ -135,15 +138,10 @@ def compensation_from_salary_info_model(salary_info: dict | None) -> Compensatio
     authoritative figure that should replace any search-result estimate."""
     if not salary_info:
         return None
-    min_amount = salary_info.get("salaryMin")
-    max_amount = salary_info.get("salaryMax")
-    if min_amount is None and max_amount is None:
-        return None
-    interval = _INTERVAL_BY_SALARY_TYPE.get(salary_info.get("salaryType", ""))
-    return Compensation(
-        interval=interval,
-        min_amount=min_amount,
-        max_amount=max_amount,
+    return _compensation_from_amounts(
+        min_amount=salary_info.get("salaryMin"),
+        max_amount=salary_info.get("salaryMax"),
+        salary_type=salary_info.get("salaryType", ""),
         currency=salary_info.get("salaryCurrency", "USD"),
     )
 
@@ -156,10 +154,11 @@ def date_posted_from_epoch_millis(epoch_millis: int | None) -> date | None:
 
 
 def is_job_remote(job: dict) -> bool:
-    """Searches the location string and remote flag/keywords a search
-    result carries. Detail-level description text is folded in by the
-    caller (jobsniffer.indeed.search), which also has the fetched
-    description available."""
+    """Searches the search-result job dict's remote flag, title, and
+    formatted location for remote signals. Does NOT look at the detail
+    fetch's full description -- jobsniffer.indeed.__init__._build_job_post
+    calls this with only the search-result dict, before/independent of
+    whatever the detail fetch returns."""
     if job.get("remoteLocation"):
         return True
     remote_keywords = ("remote", "work from home", "wfh")
