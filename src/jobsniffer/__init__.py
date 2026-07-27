@@ -13,7 +13,7 @@ from jobsniffer.indeed import Indeed
 from jobsniffer.linkedin import LinkedIn
 from jobsniffer.naukri import Naukri
 from jobsniffer.model import JobType, Location, JobResponse, Country
-from jobsniffer.model import SalarySource, ScraperInput, Site, DEFAULT_DISTANCE_MILES
+from jobsniffer.model import SalarySource, Scraper, ScraperInput, Site, DEFAULT_DISTANCE_MILES
 from jobsniffer.util import (
     set_logger_level,
     extract_salary,
@@ -30,7 +30,14 @@ from jobsniffer.ziprecruiter import ZipRecruiter
 # rather than going through scrape_jobs()'s DataFrame-returning wrapper)
 # can do `from jobsniffer import SCRAPER_MAPPING` instead of duplicating
 # this table. Previously redefined inside scrape_jobs() on every call.
-SCRAPER_MAPPING = {
+# Explicitly annotated dict[Site, type[Scraper]] rather than left inferred:
+# without it, mypy joins the dict literal's heterogeneous values down to a
+# single synthetic constructor whose return type is the abstract Scraper
+# itself, and then flags every `SCRAPER_MAPPING[site]()` call site --
+# including in downstream consumers like job_extractor -- with "Cannot
+# instantiate abstract class Scraper" (verified: reproduced and confirmed
+# fixed by this annotation via `reveal_type` in a standalone mypy check).
+SCRAPER_MAPPING: dict[Site, type[Scraper]] = {
     Site.LINKEDIN: LinkedIn,
     Site.INDEED: Indeed,
     Site.ZIP_RECRUITER: ZipRecruiter,
