@@ -197,7 +197,11 @@ def test_multiple_url_contains_needles_are_ored_together(tmp_path):
     assert written == 2
 
 
-def test_appending_to_an_existing_fixture_file_does_not_overwrite(tmp_path):
+def test_rerunning_against_the_same_har_upserts_rather_than_duplicates(tmp_path):
+    """Re-running this tool against the same HAR (e.g. a re-capture) must
+    not silently grow the fixture file with a stale duplicate that
+    ReplayClient's first-match-wins replay would then shadow behind the
+    newer entry -- see jobsniffer.http.fixtures.write_fixtures."""
     har_path = tmp_path / "site.har"
     body = base64.b64encode(b"{}").decode("ascii")
     _write_har(har_path, [_har_entry(url="https://example.com/jobs", body_text=body)])
@@ -206,7 +210,25 @@ def test_appending_to_an_existing_fixture_file_does_not_overwrite(tmp_path):
     extract_fixtures_from_har(har_path, ["example.com/jobs"], out_path)
     extract_fixtures_from_har(har_path, ["example.com/jobs"], out_path)
 
-    assert len(load_fixtures(out_path)) == 2
+    assert len(load_fixtures(out_path)) == 1
+
+
+def test_rerunning_with_a_different_har_replaces_the_matching_entry(tmp_path):
+    body_v1 = base64.b64encode(b'{"v": 1}').decode("ascii")
+    body_v2 = base64.b64encode(b'{"v": 2}').decode("ascii")
+
+    har_v1 = tmp_path / "v1.har"
+    _write_har(har_v1, [_har_entry(url="https://example.com/jobs", body_text=body_v1)])
+    har_v2 = tmp_path / "v2.har"
+    _write_har(har_v2, [_har_entry(url="https://example.com/jobs", body_text=body_v2)])
+    out_path = tmp_path / "fixtures.jsonl"
+
+    extract_fixtures_from_har(har_v1, ["example.com/jobs"], out_path)
+    extract_fixtures_from_har(har_v2, ["example.com/jobs"], out_path)
+
+    exchanges = load_fixtures(out_path)
+    assert len(exchanges) == 1
+    assert exchanges[0].content == b'{"v": 2}'
 
 
 def test_status_code_and_headers_are_preserved(tmp_path):

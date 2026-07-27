@@ -8,6 +8,7 @@ from jobsniffer.http.fixtures import (
     append_fixture,
     compute_body_signature,
     load_fixtures,
+    write_fixtures,
 )
 
 
@@ -113,7 +114,12 @@ def test_from_bytes_strips_set_cookie_header():
     assert exchange.headers == {"content-type": "text/html"}
 
 
-def test_from_bytes_strips_authorization_and_cookie_headers_case_insensitively():
+def test_from_bytes_is_an_allow_list_not_a_deny_list():
+    """Headers have zero functional value for replay/parsing (nothing
+    reads them back), so only a small allow-list of genuinely useful
+    names survives -- everything else is dropped, not just known-bad
+    names. This is what actually protects against the next site leaking
+    credentials under a header name nobody thought to deny-list."""
     exchange = RecordedExchange.from_bytes(
         method="GET",
         url="https://example.com",
@@ -123,7 +129,37 @@ def test_from_bytes_strips_authorization_and_cookie_headers_case_insensitively()
             "AUTHORIZATION": "Bearer secret-token",
             "Cookie": "session=abc",
             "Proxy-Authorization": "Basic xyz",
-            "x-safe-header": "keep-me",
+            "X-Amz-Security-Token": "also-secret",
+            "x-some-other-header": "not-on-the-allow-list-either",
+            "Content-Type": "application/json",
+            "content-length": "123",
         },
     )
-    assert exchange.headers == {"x-safe-header": "keep-me"}
+    assert exchange.headers == {
+        "Content-Type": "application/json",
+        "content-length": "123",
+    }
+
+
+def test_write_fixtures_upserts_by_method_url_and_body_signature(tmp_path):
+    """Re-running a fixture-generation tool against the same source must
+    not silently grow the file with a stale duplicate that ReplayClient's
+    first-match-wins replay would then shadow behind the newer one."""
+    path = tmp_path / "fixtures.jsonl"
+    original = RecordedExchange.from_bytes(
+        method="GET", url="https://example.com/jobs", status_code=200, content=b"old"
+    )
+    updated = RecordedExchange.from_bytes(
+        method="GET", url="https://example.com/jobs", status_code=200, content=b"new"
+    )
+    unrelated = RecordedExchange.from_bytes(
+        method="GET", url="https://example.com/other", status_code=200, content=b"z"
+    )
+
+    write_fixtures(path, [original, unrelated])
+    write_fixtures(path, [updated])
+
+    loaded = load_fixtures(path)
+    assert len(loaded) == 2
+    matching = next(e for e in loaded if e.url == "https://example.com/jobs")
+    assert matching.content == b"new"

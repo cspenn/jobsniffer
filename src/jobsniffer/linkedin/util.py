@@ -1,7 +1,25 @@
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 from jobsniffer.model import JobType, Location
 from jobsniffer.util import get_enum_from_job_type
+
+
+def job_id_from_search_card(job_card: Tag) -> str | None:
+    """Extracts the job id from a single `div.base-search-card` result on
+    LinkedIn's jobs-guest search page.
+
+    Shared by LinkedIn.scrape() and src/scripts/record_linkedin_fixtures.py
+    (which seeds a fixture for a job the real scraper would actually
+    visit) so the two can't silently drift apart -- previously each had
+    its own copy of this parse.
+    """
+    href_tag = job_card.find("a", class_="base-card__full-link")
+    href_value = href_tag.attrs.get("href") if href_tag else None
+    if not isinstance(href_value, str):
+        return None
+    href = href_value.split("?")[0]
+    return href.split("-")[-1]
 
 
 def job_type_code(job_type_enum: JobType) -> str:

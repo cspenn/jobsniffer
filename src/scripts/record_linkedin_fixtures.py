@@ -29,22 +29,21 @@ from bs4 import BeautifulSoup
 
 from jobsniffer.http import ReplayClient
 from jobsniffer.linkedin.constant import headers
+from jobsniffer.linkedin.util import job_id_from_search_card
 
 BASE_URL = "https://www.linkedin.com"
 FIXTURE_PATH = Path(__file__).parent.parent.parent / "tests" / "fixtures" / "linkedin.jsonl"
 
 
 def _first_job_id(search_html: str) -> str | None:
-    """Mirrors jobsniffer.linkedin.LinkedIn.scrape()'s own job-id
-    extraction exactly, so the detail fixture recorded here is for a job
-    the real scraper would actually visit."""
+    """Uses jobsniffer.linkedin.util.job_id_from_search_card -- the same
+    function LinkedIn.scrape() calls -- so this can't silently drift from
+    the real scraper's parsing and record a fixture for the wrong job."""
     soup = BeautifulSoup(search_html, "html.parser")
     for job_card in soup.find_all("div", class_="base-search-card"):
-        href_tag = job_card.find("a", class_="base-card__full-link")
-        href_value = href_tag.attrs.get("href") if href_tag else None
-        if isinstance(href_value, str):
-            href = href_value.split("?")[0]
-            return href.split("-")[-1]
+        job_id = job_id_from_search_card(job_card)
+        if job_id is not None:
+            return job_id
     return None
 
 

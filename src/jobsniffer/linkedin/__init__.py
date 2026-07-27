@@ -5,7 +5,7 @@ import random
 import time
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urlparse, urlunparse, unquote
+from urllib.parse import unquote, urlparse, urlunparse
 
 import regex as re
 from bs4 import BeautifulSoup
@@ -15,30 +15,31 @@ from jobsniffer.exception import LinkedInException
 from jobsniffer.linkedin.constant import headers
 from jobsniffer.linkedin.util import (
     is_job_remote,
+    job_id_from_search_card,
     job_type_code,
-    parse_job_type,
+    parse_company_industry,
     parse_job_level,
-    parse_company_industry
+    parse_job_type,
 )
 from jobsniffer.model import (
-    JobPost,
-    Location,
-    JobResponse,
-    Country,
     Compensation,
+    Country,
     DescriptionFormat,
+    JobPost,
+    JobResponse,
+    Location,
     Scraper,
     ScraperInput,
     Site,
 )
 from jobsniffer.util import (
-    extract_emails_from_text,
+    create_logger,
+    create_session,
     currency_parser,
+    extract_emails_from_text,
     markdown_converter,
     plain_converter,
-    create_session,
     remove_attributes,
-    create_logger,
 )
 
 log = create_logger("LinkedIn")
@@ -144,11 +145,8 @@ class LinkedIn(Scraper):
                 return JobResponse(jobs=job_list)
 
             for job_card in job_cards:
-                href_tag = job_card.find("a", class_="base-card__full-link")
-                if href_tag and "href" in href_tag.attrs:
-                    href = href_tag.attrs["href"].split("?")[0]
-                    job_id = href.split("-")[-1]
-
+                job_id = job_id_from_search_card(job_card)
+                if job_id is not None:
                     if job_id in seen_ids:
                         continue
                     seen_ids.add(job_id)

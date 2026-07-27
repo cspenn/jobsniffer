@@ -50,6 +50,7 @@ class RecordedResponse:
 
     def __init__(self, exchange: RecordedExchange) -> None:
         self._exchange = exchange
+        self._text: str | None = None
         self.status_code = exchange.status_code
         self.ok = 200 <= exchange.status_code < 400
         self.headers = exchange.headers
@@ -58,17 +59,24 @@ class RecordedResponse:
 
     @property
     def text(self) -> str:
-        """Lazy, matching curl_cffi.requests.Response.text exactly (verified
-        against its source): decoding only happens on access, using
-        errors="replace" rather than raising. This matters because binary
-        fixtures (e.g. ZipRecruiter's protobuf detail responses) are never
-        valid UTF-8 -- constructing a RecordedResponse for one must not
-        crash before the caller even gets a chance to read `.content`
-        instead of `.text`, the same way a real CurlCffiClient wouldn't."""
-        try:
-            return self.content.decode(self._exchange.encoding or "utf-8", errors="replace")
-        except LookupError:
-            return self.content.decode("utf-8", errors="replace")
+        """Lazy and memoized, matching curl_cffi.requests.Response.text
+        exactly (verified against its source): decoding only happens on
+        first access, using errors="replace" rather than raising, and the
+        result is cached so repeated .text/.json() calls on the same
+        response don't redecode the body each time. Laziness matters
+        because binary fixtures (e.g. ZipRecruiter's protobuf detail
+        responses) are never valid UTF-8 -- constructing a RecordedResponse
+        for one must not crash before the caller even gets a chance to read
+        `.content` instead of `.text`, the same way a real CurlCffiClient
+        wouldn't."""
+        if self._text is None:
+            try:
+                self._text = self.content.decode(
+                    self._exchange.encoding or "utf-8", errors="replace"
+                )
+            except LookupError:
+                self._text = self.content.decode("utf-8", errors="replace")
+        return self._text
 
     def json(self) -> Any:
         return json.loads(self.text)

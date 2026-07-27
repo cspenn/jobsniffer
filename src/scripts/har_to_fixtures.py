@@ -31,8 +31,8 @@ from pathlib import Path
 
 from jobsniffer.http.fixtures import (
     RecordedExchange,
-    append_fixture,
     compute_body_signature,
+    write_fixtures,
 )
 
 _TEXTUAL_MIME_MARKERS = ("json", "html", "text", "xml", "javascript")
@@ -76,15 +76,18 @@ def _request_body_signature(request: dict) -> str | None:
 def extract_fixtures_from_har(
     har_path: Path, url_contains: list[str], out_path: Path
 ) -> int:
-    """Reads har_path, appends one RecordedExchange per matching entry with
-    a captured response body to out_path (JSONL, append mode -- safe to
-    call multiple times/for multiple HARs feeding the same fixture file).
+    """Reads har_path, upserts one RecordedExchange per matching entry with
+    a captured response body into out_path (JSONL -- safe to call multiple
+    times/for multiple HARs feeding the same fixture file; a later call
+    replaces same-key exchanges rather than appending stale duplicates
+    behind them, see jobsniffer.http.fixtures.write_fixtures).
 
     An entry matches if its request URL contains ANY of the url_contains
-    substrings. Returns the number of exchanges written.
+    substrings. All matches are collected and written in a single pass
+    (not one file rewrite per HAR entry) -- returns the number written.
     """
     har = json.loads(har_path.read_text())
-    written = 0
+    exchanges = []
     for entry in har["log"]["entries"]:
         request = entry["request"]
         url = request["url"]
@@ -101,18 +104,19 @@ def extract_fixtures_from_har(
         response_headers = {
             h["name"]: h["value"] for h in response.get("headers", [])
         }
-        exchange = RecordedExchange.from_bytes(
-            method=request["method"],
-            url=url,
-            status_code=response.get("status", 0),
-            content=body,
-            headers=response_headers,
-            encoding="utf-8" if _is_textual(mime_type) else None,
-            request_body_signature=_request_body_signature(request),
+        exchanges.append(
+            RecordedExchange.from_bytes(
+                method=request["method"],
+                url=url,
+                status_code=response.get("status", 0),
+                content=body,
+                headers=response_headers,
+                encoding="utf-8" if _is_textual(mime_type) else None,
+                request_body_signature=_request_body_signature(request),
+            )
         )
-        append_fixture(out_path, exchange)
-        written += 1
-    return written
+    write_fixtures(out_path, exchanges)
+    return len(exchanges)
 
 
 def main() -> None:
