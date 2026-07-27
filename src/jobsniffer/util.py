@@ -2,18 +2,12 @@ from __future__ import annotations
 
 import logging
 import re
-from itertools import cycle
 
 import numpy as np
-import requests
-import tls_client
-import urllib3
 from markdownify import markdownify as md
-from requests.adapters import HTTPAdapter, Retry
 
+from jobsniffer.http import CurlCffiClient, HttpClient
 from jobsniffer.model import CompensationInterval, JobType, Site
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def create_logger(name: str):
@@ -29,107 +23,30 @@ def create_logger(name: str):
     return logger
 
 
-class RotatingProxySession:
-    def __init__(self, proxies=None):
-        if isinstance(proxies, str):
-            self.proxy_cycle = cycle([self.format_proxy(proxies)])
-        elif isinstance(proxies, list):
-            self.proxy_cycle = (
-                cycle([self.format_proxy(proxy) for proxy in proxies])
-                if proxies
-                else None
-            )
-        else:
-            self.proxy_cycle = None
-
-    @staticmethod
-    def format_proxy(proxy):
-        """Utility method to format a proxy string into a dictionary."""
-        if proxy.startswith("http://") or proxy.startswith("https://"):
-            return {"http": proxy, "https": proxy}
-        if proxy.startswith("socks5://"):
-            return {"http": proxy, "https": proxy}
-        return {"http": f"http://{proxy}", "https": f"http://{proxy}"}
-
-
-class RequestsRotating(RotatingProxySession, requests.Session):
-    def __init__(self, proxies=None, has_retry=False, delay=1, clear_cookies=False):
-        RotatingProxySession.__init__(self, proxies=proxies)
-        requests.Session.__init__(self)
-        self.clear_cookies = clear_cookies
-        self.allow_redirects = True
-        self.setup_session(has_retry, delay)
-
-    def setup_session(self, has_retry, delay):
-        if has_retry:
-            retries = Retry(
-                total=3,
-                connect=3,
-                status=3,
-                status_forcelist=[500, 502, 503, 504, 429],
-                backoff_factor=delay,
-            )
-            adapter = HTTPAdapter(max_retries=retries)
-            self.mount("http://", adapter)
-            self.mount("https://", adapter)
-
-    def request(self, method, url, **kwargs):
-        if self.clear_cookies:
-            self.cookies.clear()
-
-        if self.proxy_cycle:
-            next_proxy = next(self.proxy_cycle)
-            if next_proxy["http"] != "http://localhost":
-                self.proxies = next_proxy
-            else:
-                self.proxies = {}
-        return requests.Session.request(self, method, url, **kwargs)
-
-
-class TLSRotating(RotatingProxySession, tls_client.Session):
-    def __init__(self, proxies=None):
-        RotatingProxySession.__init__(self, proxies=proxies)
-        tls_client.Session.__init__(self, random_tls_extension_order=True)
-
-    def execute_request(self, *args, **kwargs):
-        if self.proxy_cycle:
-            next_proxy = next(self.proxy_cycle)
-            if next_proxy["http"] != "http://localhost":
-                self.proxies = next_proxy
-            else:
-                self.proxies = {}
-        response = tls_client.Session.execute_request(self, *args, **kwargs)
-        response.ok = response.status_code in range(200, 400)
-        return response
-
-
 def create_session(
     *,
-    proxies: dict | str | None = None,
+    proxies: list[str] | str | None = None,
     ca_cert: str | None = None,
     is_tls: bool = True,
     has_retry: bool = False,
     delay: int = 1,
     clear_cookies: bool = False,
-) -> requests.Session:
-    """
-    Creates a requests session with optional tls, proxy, and retry settings.
-    :return: A session object
-    """
-    if is_tls:
-        session = TLSRotating(proxies=proxies)
-    else:
-        session = RequestsRotating(
-            proxies=proxies,
-            has_retry=has_retry,
-            delay=delay,
-            clear_cookies=clear_cookies,
-        )
+) -> HttpClient:
+    """Creates an HttpClient (CurlCffiClient) with TLS/JA3 impersonation,
+    proxy rotation, and retry-with-backoff.
 
-    if ca_cert:
-        session.verify = ca_cert
-
-    return session
+    `is_tls` and `clear_cookies` are accepted for call-site compatibility
+    with the pre-curl_cffi signature but are no-ops: curl_cffi always
+    impersonates a browser TLS fingerprint (that's the reason it replaced
+    tls_client/requests -- see jobsniffer.http.curl_client's module
+    docstring), and per-request cookie clearing isn't meaningful for a
+    client that doesn't persist a cookie jar across calls the way
+    requests.Session does. `has_retry`/`delay` are likewise superseded by
+    CurlCffiClient's built-in stamina retry, which is always on.
+    :return: An HttpClient
+    """
+    del is_tls, has_retry, delay, clear_cookies  # compatibility no-ops, see above
+    return CurlCffiClient(proxies=proxies, ca_cert=ca_cert)
 
 
 def set_logger_level(verbose: int):

@@ -1,32 +1,33 @@
 from __future__ import annotations
 
-import re
 import json
-import requests
-from typing import Tuple
-from datetime import datetime, timedelta
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+from typing import Tuple
 
-from jobsniffer.glassdoor.constant import fallback_token, query_template, headers
+from curl_cffi.requests.exceptions import ReadTimeout
+
+from jobsniffer.exception import GlassdoorException
+from jobsniffer.glassdoor.constant import fallback_token, headers, query_template
 from jobsniffer.glassdoor.util import (
     get_cursor_for_page,
     parse_compensation,
     parse_location,
 )
-from jobsniffer.util import (
-    extract_emails_from_text,
-    create_logger,
-    create_session,
-    markdown_converter,
-)
-from jobsniffer.exception import GlassdoorException
 from jobsniffer.model import (
+    DescriptionFormat,
     JobPost,
     JobResponse,
-    DescriptionFormat,
     Scraper,
     ScraperInput,
     Site,
+)
+from jobsniffer.util import (
+    create_logger,
+    create_session,
+    extract_emails_from_text,
+    markdown_converter,
 )
 
 log = create_logger("Glassdoor")
@@ -92,7 +93,7 @@ class Glassdoor(Scraper):
                     job_list = job_list[: scraper_input.results_wanted]
                     break
             except Exception as e:
-                log.error(f"Glassdoor: {str(e)}")
+                log.error(f"Glassdoor: {e!s}")
                 break
         return JobResponse(jobs=job_list)
 
@@ -103,7 +104,7 @@ class Glassdoor(Scraper):
         location_type: str,
         page_num: int,
         cursor: str | None,
-    ) -> Tuple[list[JobPost], str | None]:
+    ) -> tuple[list[JobPost], str | None]:
         """
         Scrapes a page of Glassdoor for jobs with scraper_input criteria
         """
@@ -113,7 +114,7 @@ class Glassdoor(Scraper):
             payload = self._add_payload(location_id, location_type, page_num, cursor)
             response = self.session.post(
                 f"{self.base_url}/graph",
-                timeout_seconds=15,
+                timeout=15,
                 data=payload,
             )
             if response.status_code != 200:
@@ -123,12 +124,12 @@ class Glassdoor(Scraper):
             if "errors" in res_json:
                 raise ValueError("Error encountered in API response")
         except (
-            requests.exceptions.ReadTimeout,
+            ReadTimeout,
             GlassdoorException,
             ValueError,
             Exception,
         ) as e:
-            log.error(f"Glassdoor: {str(e)}")
+            log.error(f"Glassdoor: {e!s}")
             return jobs, None
 
         jobs_data = res_json["data"]["jobListings"]["jobListings"]
@@ -246,7 +247,7 @@ class Glassdoor(Scraper):
                 """,
             }
         ]
-        res = requests.post(url, json=body, headers=headers)
+        res = self.session.post(url, json=body, headers=headers)
         if res.status_code != 200:
             return None
         data = res.json()[0]
@@ -262,7 +263,7 @@ class Glassdoor(Scraper):
         res = self.session.get(url)
         if res.status_code != 200:
             if res.status_code == 429:
-                err = f"429 Response - Blocked by Glassdoor for too many requests"
+                err = "429 Response - Blocked by Glassdoor for too many requests"
                 log.error(err)
                 return None, None
             else:

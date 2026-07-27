@@ -35,11 +35,19 @@ Homepage = "https://github.com/cspenn/jobsniffer"
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
-    "pytest-cov>=5.0.0",
+    "coverage>=7.0.0",
     "mypy>=1.10.0",
     "ruff==0.16.0",
     "radon>=6.0.1",
 ]
+# pytest-cov's --cov flag is deliberately not used: on this environment it
+# corrupts numpy's C-extension loading ("cannot load module more than once
+# per process") as soon as a test imports the jobsniffer package, which
+# transitively imports pandas/numpy. `coverage run -m pytest` exercises the
+# identical coverage.py engine without going through pytest-cov's plugin
+# hook and does not reproduce the failure -- verified directly (both
+# invocations run the same 30 http/ tests; only --cov crashes on import).
+# Run tests via: uv run coverage run -m pytest && uv run coverage report
 # blackboxprotobuf isn't a project dependency: it pins protobuf==3.10.0, which
 # conflicts with protobuf>=5.27.0 above. Run it isolated via
 # `uvx --from blackboxprotobuf python -c '...'` when reverse-engineering the

@@ -3,36 +3,35 @@ from __future__ import annotations
 import math
 import random
 import time
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import regex as re
-import requests
 
 from jobsniffer.exception import NaukriException
-from jobsniffer.naukri.constant import headers as naukri_headers
-from jobsniffer.naukri.util import (
-    is_job_remote,
-    parse_job_type,
-    parse_company_industry,
-)
 from jobsniffer.model import (
-    JobPost,
-    Location,
-    JobResponse,
-    Country,
     Compensation,
+    Country,
     DescriptionFormat,
+    JobPost,
+    JobResponse,
+    Location,
     Scraper,
     ScraperInput,
     Site,
 )
+from jobsniffer.naukri.constant import headers as naukri_headers
+from jobsniffer.naukri.util import (
+    is_job_remote,
+    parse_company_industry,
+    parse_job_type,
+)
 from jobsniffer.util import (
-    extract_emails_from_text,
-    currency_parser,
-    markdown_converter,
-    create_session,
     create_logger,
+    create_session,
+    currency_parser,
+    extract_emails_from_text,
+    markdown_converter,
 )
 
 log = create_logger("Naukri")
@@ -119,7 +118,7 @@ class Naukri(Scraper):
                     log.warning("No job details found in API response")
                     break
             except Exception as e:
-                log.error(f"Naukri API request failed: {str(e)}")
+                log.error(f"Naukri API request failed: {e!s}")
                 return JobResponse(jobs=job_list)
 
             for job in job_details:
@@ -138,7 +137,7 @@ class Naukri(Scraper):
                     if not continue_search():
                         break
                 except Exception as e:
-                    log.error(f"Error processing job ID {job_id}: {str(e)}")
+                    log.error(f"Error processing job ID {job_id}: {e!s}")
                     raise NaukriException(str(e))
 
             if continue_search():
@@ -151,7 +150,7 @@ class Naukri(Scraper):
 
     def _process_job(
         self, job: dict, job_id: str, full_descr: bool
-    ) -> Optional[JobPost]:
+    ) -> JobPost | None:
         """
         Processes a single job from API response into a JobPost object
         """
@@ -226,7 +225,7 @@ class Naukri(Scraper):
                 break
         return location
 
-    def _get_compensation(self, placeholders: list[dict]) -> Optional[Compensation]:
+    def _get_compensation(self, placeholders: list[dict]) -> Compensation | None:
         """
         Extracts compensation data from placeholders, handling Indian salary formats (Lakhs, Crores)
         """
@@ -263,7 +262,7 @@ class Naukri(Scraper):
                     return None
         return None
 
-    def _parse_date(self, label: str, created_date: int) -> Optional[date]:
+    def _parse_date(self, label: str, created_date: int) -> date | None:
         """
         Parses date from footerPlaceholderLabel or createdDate, returning a date object
         """
@@ -290,7 +289,7 @@ class Naukri(Scraper):
         log.debug("No date parsed")
         return None
 
-    def _infer_work_from_home_type(self, placeholders: list[dict], title: str, description: str) -> Optional[str]:
+    def _infer_work_from_home_type(self, placeholders: list[dict], title: str, description: str) -> str | None:
         """
         Infers work-from-home type from job data (e.g., 'Hybrid', 'Remote', 'Work from office')
         """
