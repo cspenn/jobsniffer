@@ -11,4 +11,3 @@
 *.pyc
 .env
 dist
-/tests/fixtures/*.recording.tmp
